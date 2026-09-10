@@ -1,0 +1,13 @@
+<resources>
+    <item name="app_title" type="id" />
+    <item name="chat_input" type="id" />
+    <item name="send_message" type="id" />
+    <item name="stop_reply" type="id" />
+    <item name="switch_language" type="id" />
+    <item name="clear_history" type="id" />
+    <item name="conversation_list" type="id" />
+    <item name="open_settings" type="id" />
+    <item name="api_key" type="id" />
+    <item name="metrics" type="id" />
+    <item name="status" type="id" />
+</resources>

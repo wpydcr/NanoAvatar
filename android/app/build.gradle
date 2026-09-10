@@ -1,0 +1,36 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.avatar.nputest'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.nanoavatar.demo'
+        resValue 'string', 'app_name', 'NanoAvatar'
+        minSdk 31
+        targetSdk 34
+        versionCode 3
+        versionName '1.0.0'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release { signingConfig signingConfigs.debug }
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    if (project.hasProperty('bundleAssets')) {
+        def bundled = rootProject.file(project.property('bundleAssets'))
+        if (!new File(bundled, 'bundled/payload/phone_config.json').isFile()
+                || !new File(bundled, 'bundled/avatar/avatar.json').isFile()) {
+            throw new GradleException('bundleAssets must contain bundled/payload/phone_config.json and bundled/avatar/avatar.json')
+        }
+        sourceSets.main.assets.srcDir(bundled)
+    }
+}
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.26.0'
+    implementation 'com.qualcomm.qti:onnxruntime-android-qnn:2.5.0'
+    implementation 'com.qualcomm.qti:qnn-runtime:2.49.0'
+}

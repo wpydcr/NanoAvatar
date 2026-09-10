@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NanoAvatar</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header><a href="/" class="brand">NanoAvatar<span>STREAMING AVATAR</span></a>
+    <nav><span id="connection" role="status"></span><button id="language" type="button">EN</button><button id="settings" type="button" data-i18n="settings">设置</button></nav>
+  </header>
+  <main>
+    <section class="portrait" aria-label="Avatar">
+      <div class="stage"><canvas id="avatar" width="540" height="690"></canvas>
+        <div class="stage-label"><span class="dot"></span><span id="stage-state"></span></div>
+        <div class="metrics"><span><span data-i18n="first">首帧延迟</span> <b id="latency">未开始</b></span></div>
+      </div>
+      <div class="portrait-foot"><span id="resolution"></span><span data-i18n="audioSync">音频时钟同步</span></div>
+      <div class="runtime"><span data-i18n="inference">推理后端</span><strong id="runtime-device">--</strong><span id="runtime-provider"></span></div>
+      <p class="metric-note" data-i18n="metricNote">首帧延迟：从音频窗口齐备后开始提取特征，到首张人脸完成；不含等待音频。</p>
+    </section>
+    <section class="conversation">
+      <p class="eyebrow" data-i18n="eyebrow">一段音频，开启一段对话</p>
+      <h1 data-i18n="heading">让每一句话，都有回应。</h1>
+      <p class="intro" data-i18n="intro">写下问题，或者选择一段音频，看人物自然开口。</p>
+      <div class="chat-panel">
+        <div class="chat-head"><strong data-i18n="conversation">对话</strong><button id="clear" type="button" data-i18n="clear">清空记录</button></div>
+        <div id="history" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0"><p class="empty" data-i18n="empty">从一句「你好」开始。</p></div>
+        <form id="chat-form"><label for="prompt" class="sr-only" data-i18n="message">输入消息</label><textarea id="prompt" rows="3" maxlength="1000" required></textarea>
+          <div class="input-actions"><button type="button" id="audio" data-i18n="audio">播放 WAV</button><input type="file" id="audio-file" accept=".wav,audio/wav" hidden><span class="spacer"></span><button id="stop" type="button" disabled data-i18n="stop">停止</button><button id="send" type="submit" disabled data-i18n="send">发送</button></div>
+        </form>
+      </div>
+      <div class="suggestions"><button id="story" type="button" data-i18n="story">讲一个小故事</button><button id="hello" type="button" data-i18n="hello">认识一下</button></div>
+      <p id="notice" role="alert" hidden></p><button id="reconnect" type="button" hidden data-i18n="reconnect">重新连接</button>
+      <p class="privacy" data-i18n="privacy">对话仅保留在当前页面。密钥只保留在本次服务进程内存中。</p>
+    </section>
+  </main>
+  <footer><span>NanoAvatar</span><span data-i18n="footer">可替换的 LLM 与 TTS · 16 kHz 流式音频</span></footer>
+  <dialog id="settings-dialog"><form id="settings-form">
+    <div class="dialog-head"><h2 data-i18n="settings">设置</h2><button id="close-settings" type="button" aria-label="Close">×</button></div>
+    <p data-i18n="settingsNote">通义千问和 CosyVoice 仅用于演示。播放 WAV 不需要云端密钥。</p>
+    <label for="api-key">DashScope API Key</label><input id="api-key" type="password" autocomplete="off" maxlength="1024">
+    <p id="key-state" class="privacy"></p>
+    <label for="llm-model" data-i18n="llm">大模型</label><input id="llm-model" value="qwen-plus" required maxlength="128">
+    <label for="tts-model">TTS</label><input id="tts-model" value="cosyvoice-v2" required maxlength="128">
+    <label for="voice" data-i18n="voice">音色</label><input id="voice" value="longxiaochun_v2" required maxlength="128">
+    <p id="settings-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button id="remove-key" type="button" data-i18n="removeKey">移除密钥</button><button id="save-settings" type="submit" data-i18n="save">应用</button></div>
+  </form></dialog>
+</body>
+</html>
