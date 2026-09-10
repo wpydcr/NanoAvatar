@@ -23,8 +23,8 @@ Generating high-definition video in real time on edge devices reduces avatar app
     <th align="center" width="50%">Chinese demo</th>
   </tr>
   <tr>
-    <td align="center"><video src="assets/demo-en.mp4" controls playsinline preload="metadata" width="280"></video></td>
-    <td align="center"><video src="assets/demo-zh.mp4" controls playsinline preload="metadata" width="280"></video></td>
+    <td align="center"><video src="https://github.com/user-attachments/assets/5d2b7f12-9557-42a9-aea8-d6f68fa4798e" controls playsinline preload="metadata" width="280"></video></td>
+    <td align="center"><video src="https://github.com/user-attachments/assets/0518c0e2-22b2-43a8-926a-ba37b2e6c7b7" controls playsinline preload="metadata" width="280"></video></td>
   </tr>
 </table>
 
