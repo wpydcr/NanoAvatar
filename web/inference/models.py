@@ -1,4 +1,5 @@
-"""Load ordinary local PyTorch weights and run HuBERT/lip inference on CUDA."""
+"""Load ordinary or native integer HuBERT/lip checkpoints on CUDA."""
+from contextlib import nullcontext
 import gc
 from pathlib import Path
 import time
@@ -8,6 +9,18 @@ from transformers import HubertConfig, HubertModel
 from .networks import LiveTalkingModel
 
 MODEL_FILES = ("hubert_fp16.pt", "lip_fp32.pt")
+QUANTIZED_MODEL_FILES = ("hubert_w8a16.pt", "lip_mixed_int8.pt")
+
+
+def select_model_files(directory):
+    """Select a complete pair; preserve ordinary models when both pairs exist."""
+    directory = Path(directory)
+    for files in (MODEL_FILES, QUANTIZED_MODEL_FILES):
+        if all((directory / name).is_file() for name in files):
+            return files
+    raise FileNotFoundError(
+        f"{directory} must contain either {' + '.join(MODEL_FILES)} "
+        f"or {' + '.join(QUANTIZED_MODEL_FILES)}. Use --models PATH.")
 
 
 class CUDAUnavailableError(RuntimeError):
@@ -34,20 +47,28 @@ def require_cuda():
 class Models:
     def __init__(self, directory):
         self.hubert = self.lip = None
+        self.kernels = None
         self.load_timings = {}
         self.device = torch.device("cuda:0")
         directory = Path(directory).expanduser().resolve()
-        for filename in MODEL_FILES:
-            if not (directory / filename).is_file():
-                raise FileNotFoundError(f"Download {filename} from the model repository into {directory}")
+        files = select_model_files(directory)
+        self.quantized = files == QUANTIZED_MODEL_FILES
         try:
             require_cuda()
             torch.set_num_threads(4)
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
-            for name, filename in zip(("hubert", "lip"), MODEL_FILES):
+            if self.quantized:
+                from .quantized import Kernels, replace_modules
+                library = directory / "native_quant_cuda.dll"
+                if not library.is_file():
+                    library = Path(__file__).with_name("native_quant_cuda.dll")
+                self.kernels = Kernels(library)
+            for name, filename in zip(("hubert", "lip"), files):
                 started = time.perf_counter()
                 data = torch.load(directory / filename, map_location="cpu", weights_only=True, mmap=True)
+                if self.quantized and data.get("format") != "native_cuda_integer_v1":
+                    raise ValueError(f"Unsupported native integer checkpoint format: {filename}")
                 if name == "hubert":
                     with torch.device("meta"):
                         model = HubertModel(HubertConfig.from_dict(data["config"]))
@@ -60,12 +81,17 @@ class Models:
                         model = LiveTalkingModel(cfg, (3, 3, 3))
                     weights = data["state_dict"]
                     dtype = torch.float32
+                if self.quantized:
+                    replace_modules(model, data["modules"], self.kernels)
                 model.load_state_dict(weights, strict=True, assign=True)
-                setattr(self, name, model.eval().to(device=self.device, dtype=dtype))
+                # Preserve integer weights/sums and FP32 scales in native checkpoints.
+                options = {} if self.quantized else {"dtype": dtype}
+                setattr(self, name, model.eval().to(device=self.device, **options))
                 self.load_timings[name + "_load_to_gpu"] = (time.perf_counter() - started) * 1000
                 del data, weights, model
             self.parameter_mib = {name: sum(p.numel() * p.element_size() for p in
-                getattr(self, name).parameters()) / 1024**2 for name in ("hubert", "lip")}
+                (getattr(self, name).state_dict().values() if self.quantized else
+                 getattr(self, name).parameters())) / 1024**2 for name in ("hubert", "lip")}
             gc.collect()
             torch.cuda.empty_cache()
         except Exception:
@@ -76,7 +102,11 @@ class Models:
     def run(self, name, inputs):
         try:
             if name == "hubert":
-                return self.hubert(inputs["pcm"]).last_hidden_state[0].float()
+                # Match the validated integer attention backend without changing the floating path.
+                from torch.nn.attention import SDPBackend, sdpa_kernel
+                attention = sdpa_kernel(SDPBackend.MATH) if self.quantized else nullcontext()
+                with attention:
+                    return self.hubert(inputs["pcm"]).last_hidden_state[0].float()
             if name == "audio":
                 return self.lip.audio_encoder.forward_sequence(inputs["windows"], inputs["h"],
                     inputs["c"], inputs["start_frame"], 10)

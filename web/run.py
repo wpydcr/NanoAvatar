@@ -8,16 +8,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--avatar", type=Path, required=True, help="Directory containing avatar.json")
     parser.add_argument("--models", type=Path, default=Path(__file__).resolve().parents[1] / "models/full-precision",
-                        help="Directory containing hubert_fp16.pt and lip_fp32.pt")
+                        help="Directory containing hubert_fp16.pt + lip_fp32.pt, or hubert_w8a16.pt + lip_mixed_int8.pt")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--proxy", default=None, help="Cloud HTTP proxy; direct by default")
     args = parser.parse_args()
     if not (args.avatar / "avatar.json").is_file():
         parser.error("--avatar must point to a complete person package containing avatar.json")
-    missing = [name for name in ("hubert_fp16.pt", "lip_fp32.pt") if not (args.models / name).is_file()]
-    if missing:
-        parser.error(f"Download {', '.join(missing)} into {args.models}, or use --models PATH. See README.md.")
+    from inference.models import select_model_files
+    try:
+        select_model_files(args.models)
+    except FileNotFoundError as error:
+        parser.error(str(error))
     from inference import load_avatar
     from aiohttp import web
     from cloud import CloudConfig

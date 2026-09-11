@@ -1,4 +1,4 @@
-"""Serialized HuBERT FP16 and lip FP32 CUDA engine with independent utterance state."""
+"""Serialized floating/native integer CUDA engine with independent utterance state."""
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -202,8 +202,10 @@ class AvatarEngine:
 
     def runtime_info(self):
         self._check()
-        return {"device": "GPU", "providers": ["PyTorch CUDA"],
-                "precision": "HuBERT FP16 + lip FP32", "model_precision": {"hubert": "FP16", "lip": "FP32"},
+        quantized = self.models.quantized
+        return {"device": "GPU", "providers": ["PyTorch CUDA", "native CUDA INT8"] if quantized else ["PyTorch CUDA"],
+                "precision": "HuBERT W8A16 integer + lip mixed INT8" if quantized else "HuBERT FP16 + lip FP32",
+                "model_precision": {"hubert": "W8A16 integer", "lip": "mixed INT8 / FP32"} if quantized else {"hubert": "FP16", "lip": "FP32"},
                 "reference_cache_precision": "FP16", "automatic_fallback": False,
                 "gpu": torch.cuda.get_device_name(0), "torch_version": torch.__version__,
                 "load_timings_ms": dict(self.models.load_timings)}
@@ -260,5 +262,5 @@ class AvatarEngine:
 
 
 def load_avatar(directory, *, models, cache_directory=None):
-    """Load an avatar-v1 person with local HuBERT FP16 and lip FP32 checkpoints."""
+    """Load an avatar-v1 person with a complete floating or native integer model pair."""
     return AvatarEngine(directory, models, cache_directory=cache_directory)
