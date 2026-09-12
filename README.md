@@ -1,26 +1,26 @@
 <div align="center">
 <h1>📱 NanoAvatar</h1>
-<h3>High-definition, high-fidelity talking avatars on your phone.</h3>
-<p>📱 <strong>32 FPS on a 2023 Android chipset</strong> · ⚡ <strong>127 ms model first frame</strong> · 🏠 <strong>On-device avatar inference</strong></p>
-<p>Generate talking avatars on your phone without a cloud GPU.</p>
+<h3>Changing how often avatar applications can be used and how many users they can serve</h3>
+<p>📱 <strong>Snapdragon 8 Gen 3 · Lite 37 FPS</strong> · ⚡ <strong>112 ms model first frame</strong></p>
 <p>
-<a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-1.0.0.apk"><img src="https://img.shields.io/badge/Android-Download_APK-3DDC84?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="Download Android APK"></a>
+<a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk"><img src="https://img.shields.io/badge/Android-Full_APK-3DDC84?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="Download Full APK"></a>
+<a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk"><img src="https://img.shields.io/badge/Android-Lite_APK-0EA5E9?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="Download Lite APK"></a>
 <a href="https://huggingface.co/wpydcr/NanoAvatar"><img src="https://img.shields.io/badge/Hugging_Face-Model_Weights-FFD21E?style=for-the-badge" alt="Model weights on Hugging Face"></a>
-<a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-Get_Running-2563EB?style=for-the-badge" alt="Quick start"></a>
 </p>
 <p>
 <a href="#demo">🎬 Demos</a> ·
+<a href="#quick-start">Try it</a> ·
 <a href="#performance">📊 Benchmarks</a> ·
-English · <a href="README.zh-CN.md">简体中文</a>
+English · <a href="https://github.com/wpydcr/NanoAvatar/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 </div>
 
-🌊 **Streaming generation: start speaking as audio arrives.** With a streaming LLM and streaming TTS, NanoAvatar starts speaking in **about 0.3 seconds in our tests**, without waiting for the complete audio.
+**Animate an avatar with your own voice, offline and without an API key.**
 
 <a id="demo"></a>
-## 🎬 See it in action
+## 🎬 Demos
 
-Watch the English and Chinese demos to see the lip sync and visual detail.
+> **Generalization demo:** The examples below were not used to train the model, nor was it specifically fine-tuned for them.
 
 <table align="center">
   <tr>
@@ -33,39 +33,37 @@ Watch the English and Chinese demos to see the lip sync and visual detail.
   </tr>
 </table>
 
-<a id="performance"></a>
-## 📊 32 FPS on a phone. 333 FPS on desktop.
-
-Model benchmarks reported on the [model page](https://huggingface.co/wpydcr/NanoAvatar):
-
-| Model | Device | Model throughput | Model first frame | Memory / VRAM |
-| --- | --- | ---: | ---: | ---: |
-| 📱 Android compiled | **Z60 Ultra · Snapdragon 8 Gen 3**<br>Android 14 | **32 FPS** | **127 ms** | **785 MiB** |
-| ⚡ Quantized | **RTX 4090**<br>Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
-| 🖥️ Full precision | **RTX 4090**<br>Windows CUDA | **224 FPS** | **37 ms** | **1119 MiB** |
-
-Android first-frame timing runs from audio feature extraction to the first generated image. The app plays at **25 FPS** for audio synchronization.
-
-The model generates a **256 × 256 face region**, composited at the source video's original resolution.
+**Generate high-fidelity talking-avatar videos directly on your phone, without a cloud GPU.**
 
 <a id="quick-start"></a>
-## 🚀 Try NanoAvatar
-
-**Start with the Android APK**, or use the [Web demo](#run-on-web) on your NVIDIA GPU.
-
 <a id="run-on-android"></a>
-### 📱 Android: install and start talking
+## 🚀 Try it on your phone
 
-**Requirements:** Android 12+, ARM64, Snapdragon 8 Gen 3 / HTP v75.
+**Version 1.0.0** · [Full APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk) · [Lite APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk)
 
-1. 📦 **[Download NanoAvatar-1.0.0.apk](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-1.0.0.apk)** and install it on your phone.
-2. Open the app and let it prepare the bundled models and default avatar. No computer or manual file copying is needed.
-3. Add your **DashScope API key** in Settings to start chatting with cloud-based Qwen and CosyVoice.
+1. Install an APK and open the app. Models and an avatar are included.
+2. In **Experience** mode, hold the record button, speak, then release to animate the avatar with your own voice.
+3. For AI conversation, switch to **Conversation** mode and enter an Alibaba Cloud API key.
 
-Release notes and all downloads are on the [Releases page](https://github.com/wpydcr/NanoAvatar/releases).
+- **Full:** complete avatar resources, with generation fixed at **25 FPS**.
+- **Lite:** lightweight models with **three seconds of avatar footage**, looped for the duration of the input audio. Generation is fixed at **12.5 FPS**, with a smaller download and lower compute requirements.
+
+Both versions display FPS and first-frame time in real time.
+
+<a id="performance"></a>
+## 📊 Performance
+
+| Model | Device | Best model FPS | Best first frame | Memory / VRAM estimate |
+| --- | --- | ---: | ---: | ---: |
+| 📱 NanoAvatar | Z60 Ultra · Snapdragon 8 Gen 3 | **35 FPS** | **127 ms** | **834 MiB** |
+| 📱 NanoAvatar Lite | Z60 Ultra · Snapdragon 8 Gen 3 | **37 FPS** | **112 ms** | **700 MiB** |
+| ⚡ Quantized | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
+| 🖥️ Full precision | RTX 4090 · Windows CUDA | **224 FPS** | **37 ms** | **1119 MiB** |
+
+🌊 **Streaming generation: start speaking as audio arrives.** With a streaming LLM and streaming TTS, NanoAvatar starts speaking in **about 0.3 seconds in our tests**, without waiting for the complete audio.
 
 <a id="run-on-web"></a>
-### 🖥️ Web: run on your NVIDIA GPU
+## 🖥️ Web: run on your NVIDIA GPU
 
 **Requirements:** Python 3.11, an NVIDIA GPU and CUDA PyTorch.
 
@@ -88,12 +86,16 @@ Choose a model to download and run:
 
 **🖥️ Full precision**
 
+HuBERT FP16 and the lip-sync network in FP32.
+
 ```shell
 hf download wpydcr/NanoAvatar --include "full-precision/*" --local-dir models
 python web/run.py --models models/full-precision --avatar avatars/person/avatar
 ```
 
-**⚡ Quantized: 333 FPS on Windows / RTX 4090**
+**⚡ Quantized (Windows / RTX 4090)**
+
+HuBERT W8A16 and mixed INT8 lip-sync inference.
 
 ```shell
 hf download wpydcr/NanoAvatar --include "quantized/*" --local-dir models
@@ -121,36 +123,17 @@ This repository contains inference source code. Weights are hosted on Hugging Fa
 | **Web, quantized** | [`web/`](web/) | [`quantized/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/quantized) |
 
 <details>
-<summary><strong>🧠 Which model package should I use?</strong></summary>
+<summary><strong>🔧 Build both Android APKs from one codebase</strong></summary>
 
-Web directly loads PyTorch checkpoints. Choose `full-precision/` for HuBERT FP16 and the lip-sync network FP32, or `quantized/` for HuBERT W8A16 and mixed INT8 lip-sync inference. The bundled quantized runtime targets Windows CUDA SM89 (RTX 4090).
+Use JDK 17 or newer, Android SDK Platform 35 and Build Tools 35.0.0. Set `JAVA_HOME` and `ANDROID_HOME`. Prepare the corresponding Full and Lite resource directories; each must contain `bundled/payload/phone_config.json` and `bundled/avatar/avatar.json`. The released APKs also contain these resources under `assets/bundled/`.
 
-Android loads `android-qnn/`: ONNX graphs and QNN contexts with W8A16 HuBERT, FP32 CPU face/audio encoders, and an HTP FP16 generator.
-
-</details>
-
-<details>
-<summary><strong>🔧 Build the Android APK from source</strong></summary>
-
-Start in the cloned repository root. Install JDK 17 or newer and Android SDK Platform 35 / Build Tools 35.0.0. Set `JAVA_HOME` and `ANDROID_HOME`. Download [`android-qnn/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/android-qnn) from Hugging Face and place its complete contents under `bundle-assets/bundled/payload/`. Extract [NanoAvatar-avatar.zip](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-avatar.zip) into `bundle-assets/bundled/` to get this layout:
-
-```text
-bundle-assets/bundled/
-  payload/phone_config.json
-  payload/models/
-  payload/quality/
-  avatar/avatar.json
-  avatar/...
-```
-
-Keep this resource directory out of the source repository. Then build the APK with its resources:
+From `android/`, build both variants:
 
 ```shell
-cd android
-sh gradlew :app:assembleRelease -PbundleAssets=../bundle-assets
+sh gradlew :app:assembleFullRelease :app:assembleLiteRelease -PfullBundleAssets=../bundle-assets/full -PliteBundleAssets=../bundle-assets/lite
 ```
 
-On Windows use `.\gradlew.bat :app:assembleRelease "-PbundleAssets=../bundle-assets"`. The APK is written to `android/app/build/outputs/apk/release/app-release.apk`.
+On Windows, replace `sh gradlew` with `.\gradlew.bat`. Full and Lite both use `app/src/main/`; the flavors select their models, avatar, icon and frame rate. Both report version **1.0.0**, and the release filenames remain **NanoAvatar.apk** and **NanoAvatar-Lite.apk**.
 
 </details>
 

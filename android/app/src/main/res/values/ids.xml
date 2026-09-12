@@ -1,4 +1,8 @@
 <resources>
+    <item name="experience_mode" type="id" />
+    <item name="interaction_mode" type="id" />
+    <item name="record_audio" type="id" />
+    <item name="stop_demo" type="id" />
     <item name="app_title" type="id" />
     <item name="chat_input" type="id" />
     <item name="send_message" type="id" />

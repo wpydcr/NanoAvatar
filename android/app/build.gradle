@@ -1,15 +1,48 @@
 plugins { id 'com.android.application' }
+
+def fullAssets = providers.gradleProperty('fullBundleAssets').orNull
+def liteAssets = providers.gradleProperty('liteBundleAssets').orNull
+def requireAssets = { String flavor, String path ->
+    if (path == null) throw new GradleException('Missing -P' + flavor + 'BundleAssets')
+    def root = rootProject.file(path)
+    if (!new File(root, 'bundled/payload/phone_config.json').isFile()
+            || !new File(root, 'bundled/avatar/avatar.json').isFile()) {
+        throw new GradleException(flavor + 'BundleAssets must contain bundled payload and avatar manifests')
+    }
+    root
+}
 android {
     namespace 'com.avatar.nputest'
     compileSdk 35
     defaultConfig {
-        applicationId 'com.nanoavatar.demo'
-        resValue 'string', 'app_name', 'NanoAvatar'
         minSdk 31
         targetSdk 34
-        versionCode 3
+        versionCode 6
         versionName '1.0.0'
         ndk { abiFilters 'arm64-v8a' }
+    }
+    flavorDimensions 'edition'
+    productFlavors {
+        full {
+            dimension 'edition'
+            applicationId 'com.nanoavatar.demo'
+            resValue 'string', 'app_name', 'NanoAvatar'
+            buildConfigField 'int', 'MOUTH_STRIDE', '1'
+            manifestPlaceholders = [launcherIcon: '@mipmap/ic_launcher',
+                                    launcherRoundIcon: '@mipmap/ic_launcher_round']
+        }
+        lite {
+            dimension 'edition'
+            applicationId 'com.nanoavatar.lite200'
+            resValue 'string', 'app_name', 'NanoAvatar Lite'
+            buildConfigField 'int', 'MOUTH_STRIDE', '2'
+            manifestPlaceholders = [launcherIcon: '@mipmap/ic_launcher_lite',
+                                    launcherRoundIcon: '@mipmap/ic_launcher_lite_round']
+        }
+    }
+    sourceSets {
+        if (fullAssets != null) full.assets.srcDir(rootProject.file(fullAssets))
+        if (liteAssets != null) lite.assets.srcDir(rootProject.file(liteAssets))
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -18,17 +51,41 @@ android {
     buildTypes {
         release { signingConfig signingConfigs.debug }
     }
-    packaging { jniLibs { useLegacyPackaging = true } }
-    if (project.hasProperty('bundleAssets')) {
-        def bundled = rootProject.file(project.property('bundleAssets'))
-        if (!new File(bundled, 'bundled/payload/phone_config.json').isFile()
-                || !new File(bundled, 'bundled/avatar/avatar.json').isFile()) {
-            throw new GradleException('bundleAssets must contain bundled/payload/phone_config.json and bundled/avatar/avatar.json')
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            excludes += ['**/libQnnHtpPrepare.so', '**/libQnnGpu.so', '**/libQnnDsp.so',
+                         '**/libQnnDspV66Skel.so', '**/libQnnDspV66Stub.so']
         }
-        sourceSets.main.assets.srcDir(bundled)
+    }
+    buildFeatures { buildConfig = true }
+}
+
+androidComponents {
+    onVariants(selector().withFlavor('edition', 'lite')) { variant ->
+        variant.packaging.jniLibs.excludes.addAll([
+                '**/libQnnHtpV68*.so', '**/libQnnHtpV69*.so', '**/libQnnHtpV73*.so',
+                '**/libQnnHtpV79*.so', '**/libQnnHtpV81*.so'])
     }
 }
+
+android.applicationVariants.all { variant ->
+    if (variant.buildType.name == 'release') {
+        variant.outputs.all { output ->
+            output.outputFileName = variant.flavorName == 'full' ? 'NanoAvatar.apk' : 'NanoAvatar-Lite.apk'
+        }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.path == ':app:mergeFullReleaseAssets' })
+        requireAssets('full', fullAssets)
+    if (graph.allTasks.any { it.path == ':app:mergeLiteReleaseAssets' })
+        requireAssets('lite', liteAssets)
+}
+
 dependencies {
+    implementation files('libs/xz-1.12.jar')
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.26.0'
     implementation 'com.qualcomm.qti:onnxruntime-android-qnn:2.5.0'

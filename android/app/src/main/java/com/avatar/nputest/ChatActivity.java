@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.content.pm.PackageManager;
 import android.os.*;
 import android.text.InputType;
 import android.view.*;
@@ -26,10 +28,18 @@ public final class ChatActivity extends Activity {
     private TranscriptAdapter transcriptAdapter;
     private EditText input;
     private Button language,clear,settings,send,stop;
+    private Button experienceMode,interactionMode,record,stopDemo;
+    private LinearLayout chatControls,demoPanel;
+    private TextView demoTitle,demoHint;
+    private VoiceRecorder recorder;
+    private boolean experience=true,recordHeld;
+    private long recordingStarted;
     private CredentialStore credentials;
     private CloudConversation cloud;
     private CloudConversation.Reply reply;
     private AvatarSession engine;
+    private long experienceUtteranceId;
+    private AvatarSession.Metrics experienceMetrics;
     private final List<CloudConversation.Message> history=new ArrayList<>();
     private long active;
     private volatile boolean ready,destroyed,background;
@@ -44,6 +54,7 @@ public final class ChatActivity extends Activity {
         assets=new File(getExternalFilesDir(null),"avatar");
         credentials=new CredentialStore(this);
         english=getPreferences(MODE_PRIVATE).getBoolean("ui_english",false);
+        experience=saved==null||saved.getBoolean("experience_mode",true);
         buildUi();
         cloud=new CloudConversation(new CloudConversation.Listener(){
             public void onText(long id,String delta){ui.post(()->{if(id==active){response.append(delta);refreshTranscript(false);}});}
@@ -55,14 +66,29 @@ public final class ChatActivity extends Activity {
             public void onFailure(long id,String message){ui.post(()->{if(id==active)fail(message,null);});}
         });
         engine=new AvatarSession(this,avatar,assets,new AvatarSession.Listener(){
-            public void onReady(){ready=true;send.setEnabled(engine.isReady());showStatus(credentials.get().isEmpty()?"请在设置中填写阿里云密钥":"人物已准备好");}
+            public void onReady(){ready=true;updateControls();showStatus(idleStatus());}
             public void onProgress(String message){showStatus(message);}
-            public void onSurfaceAvailable(boolean available){send.setEnabled(engine.isReady());if(ready&&!background)showStatus(available?(active==0?"人物已准备好":"正在回答"):"正在恢复视频");}
-            public void onEnded(long id){if(active==id){commitTurn();stop.setEnabled(false);showStatus("可以继续提问");}}
+            public void onSurfaceAvailable(boolean available){
+                updateControls();
+                if(ready&&!background&&recorder==null){
+                    String working=active==0?idleStatus():experience?"正在演示你的声音":"正在回答";
+                    if(!available&&businessStatus.equals(working))showStatus("正在恢复视频");
+                    else if(available&&businessStatus.equals("正在恢复视频"))showStatus(working);
+                }
+            }
+            public void onEnded(long id){if(active==id){commitTurn();active=0;updateControls();showStatus(idleStatus());}}
             public void onError(long id,String message,Throwable error){if(id==0){ready=false;send.setEnabled(false);}fail(message,error);}
         });
         engine.prepare();
         ui.post(tick);
+        new AlertDialog.Builder(this)
+                .setTitle("使用声明 / Usage Notice")
+                .setMessage("本模型仅供非商业使用。商业授权请联系：\nwupingyu@mail.ustc.edu.cn\n\n"
+                        + "This model is for non-commercial use only. For commercial licensing, contact:\n"
+                        + "wupingyu@mail.ustc.edu.cn")
+                .setPositiveButton("我已知晓 / Continue", null)
+                .setCancelable(false)
+                .show();
     }
 
     private void buildUi() {
@@ -75,6 +101,10 @@ public final class ChatActivity extends Activity {
         language=new Button(this);language.setId(R.id.switch_language);compact(language);language.setOnClickListener(v->toggleLanguage());header.addView(language,new LinearLayout.LayoutParams(dp(56),dp(42)));
         clear=new Button(this);clear.setId(R.id.clear_history);compact(clear);clear.setOnClickListener(v->clearHistory());header.addView(clear,new LinearLayout.LayoutParams(dp(72),dp(42)));
         settings=new Button(this);settings.setId(R.id.open_settings);compact(settings);settings.setOnClickListener(v->settings());header.addView(settings,new LinearLayout.LayoutParams(dp(76),dp(42)));layout.addView(header);
+        LinearLayout modes=new LinearLayout(this);modes.setPadding(dp(14),0,dp(14),dp(8));
+        experienceMode=new Button(this);experienceMode.setId(R.id.experience_mode);compact(experienceMode);experienceMode.setTextSize(14);experienceMode.setOnClickListener(v->setMode(true));
+        interactionMode=new Button(this);interactionMode.setId(R.id.interaction_mode);compact(interactionMode);interactionMode.setTextSize(14);interactionMode.setOnClickListener(v->setMode(false));
+        modes.addView(experienceMode,new LinearLayout.LayoutParams(0,dp(44),1));LinearLayout.LayoutParams modeGap=new LinearLayout.LayoutParams(0,dp(44),1);modeGap.leftMargin=dp(8);modes.addView(interactionMode,modeGap);layout.addView(modes);
         FrameLayout scene=new FrameLayout(this);avatar=new AvatarView(this);scene.addView(avatar,new FrameLayout.LayoutParams(-1,-1));
         metrics=text("",12,Color.WHITE);metrics.setId(R.id.metrics);metrics.setSingleLine(true);metrics.setBackgroundColor(0xAA131920);metrics.setPadding(dp(12),dp(7),dp(12),dp(7));
         FrameLayout.LayoutParams overlay=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.START);overlay.setMargins(dp(10),dp(10),0,0);scene.addView(metrics,overlay);
@@ -83,14 +113,31 @@ public final class ChatActivity extends Activity {
         transcript=new ListView(this);transcript.setId(R.id.conversation_list);transcript.setDivider(null);transcript.setStackFromBottom(true);transcript.setTranscriptMode(ListView.TRANSCRIPT_MODE_NORMAL);
         transcriptAdapter=new TranscriptAdapter();transcript.setAdapter(transcriptAdapter);
         layout.addView(transcript,new LinearLayout.LayoutParams(-1,dp(140)));
-        LinearLayout controls=new LinearLayout(this);controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(12),dp(3),dp(12),dp(10));
+        LinearLayout controls=new LinearLayout(this);chatControls=controls;controls.setGravity(Gravity.CENTER_VERTICAL);controls.setPadding(dp(12),dp(3),dp(12),dp(10));
         input=new EditText(this);input.setId(R.id.chat_input);input.setTextColor(Color.WHITE);input.setHintTextColor(0xFF9AA5AF);input.setTextSize(16);input.setMaxLines(3);
         input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(2000)});
         input.setText(getPreferences(MODE_PRIVATE).getString("draft",""));input.setSelection(input.length());
         controls.addView(input,new LinearLayout.LayoutParams(0,-2,1));
         send=new Button(this);send.setId(R.id.send_message);send.setAllCaps(false);send.setEnabled(false);send.setOnClickListener(v->sendPrompt(input.getText().toString()));controls.addView(send,new LinearLayout.LayoutParams(dp(70),dp(48)));
         stop=new Button(this);stop.setId(R.id.stop_reply);stop.setAllCaps(false);stop.setEnabled(false);stop.setOnClickListener(v->{cancel("已停止，可以继续提问");});controls.addView(stop,new LinearLayout.LayoutParams(dp(70),dp(48)));
-        layout.addView(controls);setContentView(layout);
+        layout.addView(controls);
+        demoPanel=new LinearLayout(this);demoPanel.setOrientation(LinearLayout.VERTICAL);demoPanel.setGravity(Gravity.CENTER);demoPanel.setPadding(dp(22),dp(12),dp(22),dp(18));
+        demoTitle=text("",20,Color.WHITE);demoTitle.setGravity(Gravity.CENTER);demoPanel.addView(demoTitle);
+        demoHint=text("",13,0xFFB2C3CD);demoHint.setGravity(Gravity.CENTER);demoHint.setPadding(0,dp(7),0,dp(16));demoPanel.addView(demoHint);
+        record=new Button(this);record.setId(R.id.record_audio);record.setAllCaps(false);record.setTextSize(18);record.setMinHeight(0);
+        record.setOnTouchListener((v,event)->{
+            switch(event.getActionMasked()){
+                case MotionEvent.ACTION_DOWN:startRecording();return true;
+                case MotionEvent.ACTION_MOVE:if(recordHeld&&(event.getY() < -dp(32)||event.getY()>v.getHeight()+dp(32)||event.getX() < -dp(32)||event.getX()>v.getWidth()+dp(32)))cancel("录音已取消");return true;
+                case MotionEvent.ACTION_UP:if(recordHeld)finishRecording();return true;
+                case MotionEvent.ACTION_CANCEL:case MotionEvent.ACTION_POINTER_DOWN:if(recordHeld)cancel("录音已取消");return true;
+                default:return true;
+            }
+        });
+        record.setOnClickListener(v->{if(recordHeld)finishRecording();else if(recorder==null)startRecording();});
+        demoPanel.addView(record,new LinearLayout.LayoutParams(-1,dp(72)));
+        stopDemo=new Button(this);stopDemo.setId(R.id.stop_demo);compact(stopDemo);stopDemo.setTextColor(0xFFBDD0DA);stopDemo.setBackgroundColor(Color.TRANSPARENT);stopDemo.setOnClickListener(v->cancel("演示已停止"));
+        demoPanel.addView(stopDemo,new LinearLayout.LayoutParams(-1,dp(42)));layout.addView(demoPanel);setContentView(layout);
         refreshLanguage();
         loadHistory();
     }
@@ -112,15 +159,69 @@ public final class ChatActivity extends Activity {
         language.setText(english?"中文":"EN");language.setContentDescription(t("切换到英文","Switch to Chinese"));
         clear.setText(t("清空记录","Clear"));settings.setText(t("设置","Settings"));
         input.setHint(t("输入你想说的话","Type a message"));send.setText(t("发送","Send"));stop.setText(t("停止","Stop"));
+        experienceMode.setText(t("体验模式","Experience"));interactionMode.setText(t("交互模式","Conversation"));
+        demoTitle.setText(t("让数字人说出你的声音","Give your avatar a voice"));
+        demoHint.setText(t("长按录音，松开后观看口型推理\n无需 API，音频仅在本机处理，最长 30 秒","Hold to record, release to animate\nNo API needed. Audio stays on your device. Up to 30 seconds."));
+        stopDemo.setText(t("停止演示","Stop playback"));updateModeUi();
         refreshStatus();refreshTranscriptLanguage();
-        if(engine==null)metrics.setText(t("FPS  0.0    首帧延迟  未开始","FPS  0.0   First frame latency  Not started"));else refreshMetrics();
+        refreshMetrics();
     }
     private void refreshTranscriptLanguage(){
         if(transcriptAdapter==null)return;
         int first=transcript.getFirstVisiblePosition();View row=transcript.getChildAt(0);int top=row==null?0:row.getTop();
         transcriptAdapter.notifyDataSetChanged();if(row!=null)transcript.setSelectionFromTop(first,top);
     }
-    private void refreshStatus(){if(status!=null)status.setText((english?englishStatus(businessStatus):businessStatus)+(!historyLoaded?t(" · 对话记录暂时无法读取，请稍后重试"," · Conversation history is unavailable. Try again later."):historyDirty?t(" · 记录暂未保存，将重试"," · History is not saved yet. It will retry."):""));}
+    private void refreshStatus(){if(status!=null)status.setText((english?englishStatus(businessStatus):businessStatus)+(!experience&&!historyLoaded?t(" · 对话记录暂时无法读取，请稍后重试"," · Conversation history is unavailable. Try again later."):historyDirty?t(" · 记录暂未保存，将重试"," · History is not saved yet. It will retry."):""));}
+
+    private String idleStatus(){return experience?"人物已准备好，长按下方开始录音":credentials.get().isEmpty()?"请在设置中填写阿里云密钥":"可以继续提问";}
+    private void setMode(boolean value){
+        if(experience==value)return;
+        cancel(null);saveDraft();experience=value;
+        ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(input.getWindowToken(),0);
+        updateModeUi();refreshMetrics();if(ready)showStatus(idleStatus());else refreshStatus();
+    }
+    private GradientDrawable rounded(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
+    private void updateModeUi(){
+        demoPanel.setVisibility(experience?View.VISIBLE:View.GONE);
+        transcript.setVisibility(experience?View.GONE:View.VISIBLE);chatControls.setVisibility(experience?View.GONE:View.VISIBLE);
+        clear.setVisibility(experience?View.GONE:View.VISIBLE);settings.setVisibility(experience?View.GONE:View.VISIBLE);
+        for(Button b:new Button[]{experienceMode,interactionMode}){boolean selected=(b==experienceMode)==experience;b.setSelected(selected);b.setTextColor(selected?0xFF10232A:0xFFA9BBC7);b.setBackground(rounded(selected?0xFFA8EBE4:0xFF22313D,12));}
+        updateControls();
+    }
+    private void updateControls(){
+        boolean available=engine!=null&&engine.isReady()&&!background;
+        send.setEnabled(available&&!experience);stop.setEnabled(active!=0);
+        record.setEnabled(available&&(recorder==null||recordHeld));
+        record.setTextColor(record.isEnabled()?0xFF0A222A:0xFF82979F);
+        record.setBackground(rounded(recordHeld?0xFFFFC8AD:record.isEnabled()?0xFF80E0D8:0xFF293E47,22));
+        record.setText(recordHeld?t("松开开始演示","Release to animate"):recorder!=null?t("正在处理录音","Finishing recording"):t("长按录音","Hold to record"));
+        record.setContentDescription(recordHeld?t("正在录音，松开播放，移出按钮取消","Recording. Release to play; slide away to cancel"):t("长按录音，松开后演示。无障碍模式下点按开始，再次点按结束","Hold to record and release to animate. With accessibility, tap to start and tap again to finish"));
+        stopDemo.setVisibility(active!=0?View.VISIBLE:View.INVISIBLE);stopDemo.setEnabled(active!=0);
+    }
+    private void startRecording(){
+        if(!experience||background||engine==null||!engine.isReady()||recorder!=null)return;
+        if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},41);return;
+        }
+        cancel(null);recordHeld=true;recordingStarted=SystemClock.elapsedRealtime();
+        final VoiceRecorder[] owner=new VoiceRecorder[1];
+        VoiceRecorder next=new VoiceRecorder(new VoiceRecorder.Listener(){
+            public void onFinished(float[] pcm){if(recorder!=owner[0])return;recorder=null;recordHeld=false;updateControls();playRecording(pcm);}
+            public void onError(){if(recorder!=owner[0])return;recorder=null;recordHeld=false;updateControls();showStatus("无法录音，请检查麦克风权限或占用情况");}
+        });
+        owner[0]=next;recorder=next;next.start();record.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);showStatus("正在录音，松开演示，移出按钮取消");updateControls();
+    }
+    private void finishRecording(){if(recorder==null)return;recordHeld=false;recorder.finish();updateControls();}
+    private void playRecording(float[] pcm){
+        if(!experience||background||destroyed||!engine.isReady())return;
+        if(pcm.length<6400){showStatus("录音太短，请长按说一句话");return;}
+        cancel(null);long id=engine.begin();active=id;experienceUtteranceId=id;experienceMetrics=engine.metrics();
+        engine.pushAudio(id,pcm);engine.endAudio(id);refreshMetrics();updateControls();showStatus("正在演示你的声音");
+    }
+    @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){
+        super.onRequestPermissionsResult(request,permissions,grants);
+        if(request==41&&experience&&!destroyed)showStatus(grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED?"麦克风已就绪，请再次长按录音":"未开启麦克风权限，可在系统设置中允许后重试");
+    }
     private final class TranscriptAdapter extends BaseAdapter {
         public int getCount(){return history.size()+(!committed?2:0);}
         public CloudConversation.Message getItem(int position){
@@ -156,10 +257,12 @@ public final class ChatActivity extends Activity {
         reply=cloud.start(id,clean,new ArrayList<>(history),credentials.get());
     }
     private void cancel(String message) {
+        VoiceRecorder capture=recorder;recorder=null;recordHeld=false;if(capture!=null)capture.close();
         active=0;
         if(engine!=null)engine.cancel();
         CloudConversation.Reply pending=reply;reply=null;if(pending!=null)pending.cancel();
         commitTurn();if(stop!=null)stop.setEnabled(false);
+        if(record!=null)updateControls();
         if(message!=null)showStatus(message);
     }
     private void fail(String message,Throwable error) {
@@ -224,6 +327,15 @@ public final class ChatActivity extends Activity {
 
     private String englishStatus(String message) {
         switch(message){
+            case "人物已准备好，长按下方开始录音":return "Avatar ready. Hold the button to record";
+            case "正在演示你的声音":return "Animating your voice";
+            case "录音已取消":return "Recording cancelled";
+            case "演示已停止":return "Playback stopped";
+            case "无法录音，请检查麦克风权限或占用情况":return "Cannot record. Check microphone permission or whether another app is using it";
+            case "正在录音，松开演示，移出按钮取消":return "Recording. Release to animate; slide away to cancel";
+            case "录音太短，请长按说一句话":return "Recording too short. Hold the button and say a sentence";
+            case "麦克风已就绪，请再次长按录音":return "Microphone ready. Hold the button again to record";
+            case "未开启麦克风权限，可在系统设置中允许后重试":return "Microphone permission is off. Allow it in system settings and try again";
             case "正在准备人物和对话":return "Preparing avatar and conversation";
             case "正在准备人物和模型，首次启动需要一些时间":return "Preparing avatar and models; first launch may take a moment";
             case "缺少人物或模型，请下载完整版安装包或按源码说明配置":return "Avatar or models are missing. Download the complete APK or follow the source setup instructions";
@@ -277,21 +389,26 @@ public final class ChatActivity extends Activity {
     }
 
     private void refreshMetrics(){
-        AvatarSession.Metrics m=engine.metrics();
-        String latency=m.firstFrameMs>=0?String.format(Locale.ROOT,english?"%.1f ms":"%.1f 毫秒",m.firstFrameMs):m.state.equals("idle")?t("未开始","Not started"):!m.state.equals("waiting")?t("未生成","No frame"):!m.hasAudio?t("等待音频","Waiting for audio"):String.format(Locale.ROOT,english?"Generating %.0f ms":"生成中 %.0f 毫秒",m.generatingMs);
-        String shown=String.format(Locale.ROOT,english?"FPS  %.1f   First frame latency  %s":"FPS  %.1f    首帧延迟  %s",m.mouthFps,latency);if(!shown.contentEquals(metrics.getText()))metrics.setText(shown);
+        AvatarSession.Metrics live=engine==null?null:engine.metrics();
+        if(live!=null&&experienceUtteranceId!=0&&live.utteranceId==experienceUtteranceId)experienceMetrics=live;
+        AvatarSession.Metrics m=experience?experienceMetrics:live;
+        String latency=m==null?t("未开始","Not started"):m.firstFrameMs>=0?String.format(Locale.ROOT,english?"%.1f ms":"%.1f 毫秒",m.firstFrameMs):m.state.equals("idle")?t("未开始","Not started"):!m.state.equals("waiting")?t("未生成","No frame"):!m.hasAudio?t("等待音频","Waiting for audio"):String.format(Locale.ROOT,english?"Generating %.0f ms":"生成中 %.0f 毫秒",m.generatingMs);
+        String fps=experience?(m==null?t("未开始","Not started"):m.completedInferenceFps>=0?String.format(Locale.ROOT,"%.1f",m.completedInferenceFps):m.state.equals("waiting")?t("计算中","Computing"):t("未完成","Incomplete")):String.format(Locale.ROOT,"%.1f",m==null?0:m.mouthFps);
+        String shown=(experience?t("全量 FPS  ","Overall FPS  "):"FPS  ")+fps+t("    首帧计算  ","   First frame compute  ")+latency;
+        if(!shown.contentEquals(metrics.getText()))metrics.setText(shown);
     }
     private final Runnable tick=new Runnable(){public void run(){
         if(destroyed)return;
         refreshMetrics();
+        if(recordHeld){double seconds=(SystemClock.elapsedRealtime()-recordingStarted)/1000d;record.setText(seconds>=30?t("已录满 30 秒，松开演示","30s recorded. Release to animate"):String.format(Locale.ROOT,english?"Release to animate · %.1fs":"松开演示 · %.1f 秒",seconds));}
         ui.postDelayed(this,250);
     }};
 
     private void saveError(String stage,Throwable error) {
         android.util.Log.e("NanoAvatar",stage+": "+error.getClass().getSimpleName());
     }
-    @Override protected void onResume(){super.onResume();background=false;if(engine!=null)engine.setPaused(false);if(send!=null)send.setEnabled(engine!=null&&engine.isReady());}
-    @Override protected void onSaveInstanceState(Bundle state){saveDraft();super.onSaveInstanceState(state);}
-    @Override protected void onStop(){saveDraft();background=true;cancel(null);if(engine!=null)engine.setPaused(true);super.onStop();}
+    @Override protected void onResume(){super.onResume();background=false;if(engine!=null)engine.setPaused(false);if(send!=null)updateControls();}
+    @Override protected void onSaveInstanceState(Bundle state){saveDraft();state.putBoolean("experience_mode",experience);super.onSaveInstanceState(state);}
+    @Override protected void onStop(){saveDraft();background=true;boolean interrupted=recorder!=null||active!=0;cancel(interrupted&&ready?idleStatus():null);if(engine!=null)engine.setPaused(true);super.onStop();}
     @Override protected void onDestroy(){destroyed=true;cancel(null);ui.removeCallbacksAndMessages(null);if(cloud!=null)cloud.close();if(engine!=null)engine.close();super.onDestroy();}
 }

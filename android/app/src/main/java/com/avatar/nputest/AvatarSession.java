@@ -31,13 +31,19 @@ public final class AvatarSession implements AutoCloseable {
      * First-frame computation runs from the first ready feature window to its first generated RGB,
      * excluding PCM accumulation, earlier cloud waits and presentation. A negative value means no RGB yet.
      * hasAudio means feature extraction has started, not merely that a PCM packet was accepted.
+     * completedInferenceFps is fresh generator calls divided by summed backend call time. It stays negative
+     * without a finished utterance, model work and a fresh frame. inferenceComplete ignores later playback.
      */
     public static final class Metrics {
-        public final double mouthFps, firstFrameMs, generatingMs;
-        public final boolean hasAudio;
+        public final long utteranceId;
+        public final double mouthFps, firstFrameMs, generatingMs, completedInferenceFps;
+        public final boolean hasAudio, inferenceComplete;
         public final String state;
-        private Metrics(double fps, double first, double waiting, boolean audio, String state) {
-            mouthFps = fps; firstFrameMs = first; generatingMs = waiting; hasAudio = audio; this.state = state;
+        private Metrics(long id, double fps, double first, double waiting, boolean audio, String state,
+                        double completedFps, boolean complete) {
+            utteranceId = id; mouthFps = fps; firstFrameMs = first; generatingMs = waiting;
+            hasAudio = audio; this.state = state;
+            completedInferenceFps = completedFps; inferenceComplete = complete;
         }
     }
 
@@ -46,6 +52,7 @@ public final class AvatarSession implements AutoCloseable {
         // firstPcm records packet acceptance; modelInput records the first ready extraction window.
         long firstPcm, modelInput, firstGenerated, received, submitted, displayed, lastPhase, blockStarted;
         String state = "waiting";
+        final InferenceWorkMeter inference = new InferenceWorkMeter();
         final List<Double> blocks = new ArrayList<>(), presentations = new ArrayList<>(), generations = new ArrayList<>();
         final ArrayDeque<Long> recent = new ArrayDeque<>();
         Map<String, Double> stages = Collections.emptyMap();
@@ -69,6 +76,14 @@ public final class AvatarSession implements AutoCloseable {
             value.put("new_frame_generated_ms", new ArrayList<>(generations));
             value.put("npu_stage_ms", new LinkedHashMap<>(stages));
             value.put("new_mouth_fps", count > 1 && last > first ? (count - 1) * 1000d / (last - first) : null);
+            double completedFps = inference.completedFps();
+            value.put("inference_complete", inference.inferenceComplete());
+            value.put("inference_compute_nanos", inference.computeNanos());
+            value.put("inference_compute_ms", inference.computeNanos() / 1e6);
+            value.put("fresh_generated_frames", inference.freshFrames());
+            value.put("completed_inference_fps", completedFps >= 0 ? completedFps : null);
+            value.put("completed_inference_definition",
+                    "successful_fresh_generator_calls / sum(extract,audio,generate)_elapsed_seconds");
             return value;
         }
     }
@@ -176,6 +191,7 @@ public final class AvatarSession implements AutoCloseable {
         inbox.cancel();
         PcmStream current = stream; if (current != null) current.cancel();
         Stats s = stats; if (s != null) synchronized (s) {
+            s.inference.cancel();
             if (s.state.equals("waiting")) s.state = "cancelled";
         }
     }
@@ -190,15 +206,17 @@ public final class AvatarSession implements AutoCloseable {
 
     public Metrics metrics() {
         Stats s = stats;
-        if (s == null) return new Metrics(0, -1, 0, false, "idle");
+        if (s == null) return new Metrics(0, 0, -1, 0, false, "idle", -1, false);
         long now = SystemClock.elapsedRealtimeNanos();
         synchronized (s) {
             while (!s.recent.isEmpty() && s.recent.peekFirst() < now - 1_000_000_000L) s.recent.removeFirst();
             int count = s.recent.size();
             long span = count > 1 ? s.recent.peekLast() - s.recent.peekFirst() : 0;
             double fps = span > 0 ? (count - 1) * 1e9 / span : 0;
-            return new Metrics(fps, s.firstGenerated > 0 && s.modelInput > 0 ? (s.firstGenerated - s.modelInput) / 1e6 : -1,
-                    s.modelInput > 0 ? (now - s.modelInput) / 1e6 : 0, s.modelInput > 0, s.state);
+            return new Metrics(s.id, fps,
+                    s.firstGenerated > 0 && s.modelInput > 0 ? (s.firstGenerated - s.modelInput) / 1e6 : -1,
+                    s.modelInput > 0 ? (now - s.modelInput) / 1e6 : 0, s.modelInput > 0, s.state,
+                    s.inference.completedFps(), s.inference.inferenceComplete());
         }
     }
 
@@ -271,18 +289,31 @@ public final class AvatarSession implements AutoCloseable {
                             s.blockStarted = now;
                             if (s.modelInput == 0) s.modelInput = now;
                         } }
-                        return backend.extract(actual);
+                        long started = SystemClock.elapsedRealtimeNanos();
+                        try { return backend.extract(actual); }
+                        finally { recordInferenceCall(id, started); }
                     }, block -> produceBlock(id, block));
                 } else if (command.kind == AudioInbox.AUDIO) {
                     stream.push(command.pcm);
                 } else {
-                    stream.finish(); if (id == active) player.end(id);
+                    stream.finish();
+                    if (id == active) {
+                        Stats s = stats; if (s != null) synchronized (s) {
+                            if (s.id == id && id == active) s.inference.finish();
+                        }
+                        player.end(id);
+                    }
                 }
-            } catch (Exception error) { post(() -> {
+            } catch (Exception error) {
+                Stats failed = stats; if (failed != null) synchronized (failed) {
+                    if (failed.id == id && id == active) failed.inference.cancel();
+                }
+                post(() -> {
                 if (id != active) return;
                 cancel(); Stats s = stats; if (s != null) synchronized (s) { s.state = "failed"; }
                 listener.onError(id, "本次口播未能完成", error);
-            }); }
+                });
+            }
         }
     }
 
@@ -291,20 +322,35 @@ public final class AvatarSession implements AutoCloseable {
         if (id != active) return;
         Stats timing = stats; long started = 0;
         if (timing != null) synchronized (timing) { if (timing.id == id && id == active) started = timing.blockStarted; }
-        float[] encoded = backend.audio(block);
+        float[] encoded;
+        long audioStarted = SystemClock.elapsedRealtimeNanos();
+        try { encoded = backend.audio(block); }
+        finally { recordInferenceCall(id, audioStarted); }
         if (id != active) return;
+        byte[] rgb = null;
         for (int i = 0; i < block.count(); i++) {
             if (id != active) return;
-            byte[] rgb = backend.generate(encoded, i, player.nextPhase());
+            // Keep every 25 Hz audio/LSTM step. Lite only reuses generated RGB on alternate steps.
+            boolean fresh = (block.firstFrame + i) % BuildConfig.MOUTH_STRIDE == 0;
+            if (fresh) {
+                long phase = player.nextPhase();
+                long generateStarted = SystemClock.elapsedRealtimeNanos();
+                try { rgb = backend.generate(encoded, i, phase); }
+                finally { recordInferenceCall(id, generateStarted); }
+            }
             Stats generatedStats = stats; if (generatedStats != null) synchronized (generatedStats) {
-                if (generatedStats.id == id && active == id) {
+                if (fresh && generatedStats.id == id && active == id) {
                     long now = SystemClock.elapsedRealtimeNanos();
                     if (generatedStats.firstGenerated == 0) generatedStats.firstGenerated = now;
                     generatedStats.generations.add((now - generatedStats.sent) / 1e6);
+                    generatedStats.inference.recordFreshFrame();
                 }
             }
             if (id != active) return;
-            if (!player.submit(id, block.audio[i], rgb, Math.min(1, (block.firstFrame + i + 1) / 5f), true)) return;
+            if (!player.submit(id, block.audio[i], rgb, Math.min(1, (block.firstFrame + i + 1) / 5f), fresh)) {
+                if (id == active) throw new IllegalStateException("Playback stopped before frame admission");
+                return;
+            }
             Stats s = stats; if (s != null) synchronized (s) { if (s.id == id && id == active) s.submitted += block.audio[i].length; }
         }
         Stats s = stats; if (s != null && started != 0) {
@@ -312,6 +358,14 @@ public final class AvatarSession implements AutoCloseable {
             synchronized (s) { if (s.id == id && id == active) {
                 s.blocks.add((SystemClock.elapsedRealtimeNanos() - started) / 1e6); s.blockStarted = 0; s.stages = stages;
             } }
+        }
+    }
+
+    private void recordInferenceCall(long id, long started) {
+        long finished = SystemClock.elapsedRealtimeNanos();
+        Stats s = stats;
+        if (s != null) synchronized (s) {
+            if (s.id == id && id == active) s.inference.recordCall(started, finished);
         }
     }
 
