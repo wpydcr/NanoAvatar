@@ -119,7 +119,7 @@ This repository contains inference source code. Weights are hosted on Hugging Fa
 | Platform | Source | Hugging Face weights |
 | --- | --- | --- |
 | **Android** | [`android/`](android/) | [`android-qnn/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/android-qnn) |
-| **Web, full precision** | [`web/`](web/) | [`full-precision/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/full-precision) |
+| **Web, full precision** | [`web/`](web/) | `full-precision/`（come soon） |
 | **Web, quantized** | [`web/`](web/) | [`quantized/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/quantized) |
 
 <details>

@@ -119,7 +119,7 @@ Web 会根据 `--models` 指向的目录选择模型，量化 CUDA DLL 已随 We
 | 平台 | 源码 | Hugging Face 权重 |
 | --- | --- | --- |
 | **安卓** | [`android/`](android/) | [`android-qnn/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/android-qnn) |
-| **Web 满血版** | [`web/`](web/) | [`full-precision/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/full-precision) |
+| **Web 满血版** | [`web/`](web/) | `full-precision/`（come soon） |
 | **Web 量化版** | [`web/`](web/) | [`quantized/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/quantized) |
 
 <details>
