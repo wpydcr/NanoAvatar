@@ -1,7 +1,7 @@
 <div align="center">
 <h1>📱 NanoAvatar</h1>
 <h3>改变了数字人应用的使用频率和规模上限</h3>
-<p>📱 <strong>骁龙 8 Gen 3 · Lite 37 FPS</strong> · ⚡ <strong>模型首帧 112 ms</strong></p>
+<p>📱 <strong>23年手机芯片 · 41 FPS</strong> · ⚡ <strong>首帧延迟 103 ms</strong></p>
 <p>
 <a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk"><img src="https://img.shields.io/badge/Android-完整版_APK-3DDC84?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="下载完整版 APK"></a>
 <a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk"><img src="https://img.shields.io/badge/Android-Lite_APK-0EA5E9?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="下载 Lite APK"></a>
@@ -15,7 +15,7 @@
 </p>
 </div>
 
-**无需 API key，断网也能用自己的声音驱动数字人。**
+**直接在手机上生成高保真数字人视频，无需云端 GPU。**
 
 <a id="demo"></a>
 ## 🎬 实际效果
@@ -33,7 +33,7 @@
   </tr>
 </table>
 
-**直接在手机上生成高保真数字人视频，无需云端 GPU。**
+**断网体验端侧数字人生成模型。**
 
 <a id="quick-start"></a>
 <a id="run-on-android"></a>
@@ -46,17 +46,18 @@
 3. 如需 AI 对话，切换到**交互模式**并填写阿里云 API key。
 
 - **完整版**：完整人物资源，生成帧率固定为 **25 FPS**。
-- **Lite**：轻量化模型，内置 **3 秒人物素材**，循环使用并随音频持续生成。生成帧率固定为 **12.5 FPS**，安装包更小，算力需求更低。
+- **Lite**：轻量化模型，更小人物包。生成帧率固定为 **12.5 FPS**。安装包更小，算力需求更低。
 
 两版都会实时显示 FPS 和首帧时间。
 
 <a id="performance"></a>
 ## 📊 性能实测
 
-| 模型 | 设备 | 最佳模型 FPS | 最佳首帧 | 内存 / 显存估算 |
+| 模型 | 设备 | 模型 FPS | 首帧 | 内存 / 显存估算 |
 | --- | --- | ---: | ---: | ---: |
-| 📱 NanoAvatar 完整版 | 努比亚 Z60 Ultra · 骁龙 8 Gen 3 | **35 FPS** | **127 ms** | **834 MiB** |
-| 📱 NanoAvatar Lite | 努比亚 Z60 Ultra · 骁龙 8 Gen 3 | **37 FPS** | **112 ms** | **700 MiB** |
+| 📱 NanoAvatar 完整版 | 23年 · 骁龙 8 Gen 3 | **39 FPS** | **115 ms** | **834 MiB** |
+| 📱 NanoAvatar Lite | 23年 · 骁龙 8 Gen 3 | **41 FPS** | **103 ms** | **700 MiB** |
+| 📱 NanoAvatar Lite | 21年 · 骁龙 8 Gen 1 | **18 FPS** | **183 ms** | **693 MiB** |
 | ⚡ 量化版 | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
 | 🖥️ 满血版 | RTX 4090 · Windows CUDA | **224 FPS** | **37 ms** | **1119 MiB** |
 

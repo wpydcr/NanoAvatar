@@ -1,7 +1,7 @@
 <div align="center">
 <h1>📱 NanoAvatar</h1>
 <h3>Changing how often avatar applications can be used and how many users they can serve</h3>
-<p>📱 <strong>Snapdragon 8 Gen 3 · Lite 37 FPS</strong> · ⚡ <strong>112 ms model first frame</strong></p>
+<p>📱 <strong>2023 mobile chipset · 41 FPS</strong> · ⚡ <strong>103 ms first-frame latency</strong></p>
 <p>
 <a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk"><img src="https://img.shields.io/badge/Android-Full_APK-3DDC84?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="Download Full APK"></a>
 <a href="https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk"><img src="https://img.shields.io/badge/Android-Lite_APK-0EA5E9?style=for-the-badge&amp;logo=android&amp;logoColor=white" alt="Download Lite APK"></a>
@@ -15,7 +15,7 @@ English · <a href="https://github.com/wpydcr/NanoAvatar/blob/main/README.zh-CN.
 </p>
 </div>
 
-**Animate an avatar with your own voice, offline and without an API key.**
+**Generate high-fidelity talking-avatar videos directly on your phone, without a cloud GPU.**
 
 <a id="demo"></a>
 ## 🎬 Demos
@@ -33,7 +33,7 @@ English · <a href="https://github.com/wpydcr/NanoAvatar/blob/main/README.zh-CN.
   </tr>
 </table>
 
-**Generate high-fidelity talking-avatar videos directly on your phone, without a cloud GPU.**
+**Try the on-device avatar generation model offline.**
 
 <a id="quick-start"></a>
 <a id="run-on-android"></a>
@@ -46,17 +46,18 @@ English · <a href="https://github.com/wpydcr/NanoAvatar/blob/main/README.zh-CN.
 3. For AI conversation, switch to **Conversation** mode and enter an Alibaba Cloud API key.
 
 - **Full:** complete avatar resources, with generation fixed at **25 FPS**.
-- **Lite:** lightweight models with **three seconds of avatar footage**, looped for the duration of the input audio. Generation is fixed at **12.5 FPS**, with a smaller download and lower compute requirements.
+- **Lite:** lightweight models and a smaller avatar package. Generation is fixed at **12.5 FPS**, with a smaller download and lower compute requirements.
 
 Both versions display FPS and first-frame time in real time.
 
 <a id="performance"></a>
 ## 📊 Performance
 
-| Model | Device | Best model FPS | Best first frame | Memory / VRAM estimate |
+| Model | Device | Model FPS | First frame | Memory / VRAM estimate |
 | --- | --- | ---: | ---: | ---: |
-| 📱 NanoAvatar | Z60 Ultra · Snapdragon 8 Gen 3 | **35 FPS** | **127 ms** | **834 MiB** |
-| 📱 NanoAvatar Lite | Z60 Ultra · Snapdragon 8 Gen 3 | **37 FPS** | **112 ms** | **700 MiB** |
+| 📱 NanoAvatar | 2023 · Snapdragon 8 Gen 3 | **39 FPS** | **115 ms** | **834 MiB** |
+| 📱 NanoAvatar Lite | 2023 · Snapdragon 8 Gen 3 | **41 FPS** | **103 ms** | **700 MiB** |
+| 📱 NanoAvatar Lite | 2021 · Snapdragon 8 Gen 1 | **18 FPS** | **183 ms** | **693 MiB** |
 | ⚡ Quantized | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
 | 🖥️ Full precision | RTX 4090 · Windows CUDA | **224 FPS** | **37 ms** | **1119 MiB** |
 
