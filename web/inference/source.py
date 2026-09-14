@@ -1,221 +1,130 @@
-"""Native-size avatar-v1 decoding and precomputed mouth geometry."""
-import json
+﻿"""Prepare an uploaded video directly into a private, disposable runtime cache."""
 from pathlib import Path
-import shutil
 import tempfile
-
 import cv2
 import numpy as np
+from .detection import FaceDetector, align_matrix
+
+DATA = Path(__file__).with_name("data")
 
 
-def child(root, name):
-    if not isinstance(name, str) or not name or ":" in name:
-        raise ValueError("Invalid person asset path")
-    target = (root / name).resolve()
-    if not target.is_relative_to(root) or target == root:
-        raise ValueError("Person asset path escapes its package")
-    if not target.is_file():
-        raise ValueError(f"Person package is incomplete: {name}")
-    return target
-
-
-class PhoneSource:
-    def __init__(self, directory, cache_directory):
-        self.directory = Path(directory).resolve()
-        self.cache_directory = Path(cache_directory).resolve()
-        self.frames = self.faces = self._raw_faces = self._reference_faces = self._temporary = None
+class VideoSource:
+    def __init__(self, video, cache_directory, face_models, *, max_side=960, clip_seconds=10, progress=None):
+        self.frames = self.faces = self._temporary = None
+        self.masks, self.geometry = [], []
         self.closed = False
-        self.masks = []
-        self.mouth_bounds = []
-        try:
-            self.meta = json.loads(child(self.directory, "avatar.json").read_text("utf-8-sig"))
-            self.width, self.height = (self.meta[k] for k in ("width", "height"))
-            self.count = self.meta["frame_count"]
-            self.fps = self.meta["source_fps"]
-            if (self.meta.get("version") != 1 or self.fps != 24 or
-                    any(type(x) is not int or x <= 0 for x in (self.width, self.height, self.count)) or
-                    self.count < 2 or self.width > 8192 or self.height > 8192 or self.count > 2000 or
-                    self.meta.get("loop_frames") != self.count * 2 - 2):
-                raise ValueError("Unsupported avatar-v1 dimensions or 24 Hz source timeline")
-            if len(self.meta["frames"]) != self.count:
-                raise ValueError("Person geometry count does not match its video")
-            self.video = child(self.directory, self.meta["video"])
-            face_path = child(self.directory, "aligned_faces_rgb.bin")
-            if face_path.stat().st_size != self.count * 256 * 256 * 3:
-                raise ValueError("Aligned face byte count does not match avatar.json")
-            self._raw_faces = np.memmap(face_path, dtype=np.uint8, mode="r", shape=(self.count, 256, 256, 3))
-            reference_path = child(self.directory, self.meta.get("reference_faces", "aligned_faces_rgb.bin"))
-            if reference_path.stat().st_size != face_path.stat().st_size:
-                raise ValueError("Reference face byte count does not match avatar.json")
-            self._reference_faces = np.memmap(reference_path, dtype=np.uint8, mode="r", shape=(self.count, 256, 256, 3))
-            self.faces = self._reference_faces.transpose(0, 3, 1, 2)
-            repair = child(self.directory, "repair_rgb.raw").read_bytes()
-            if len(repair) != 256 * 256 * 3:
-                raise ValueError("Invalid repair image length")
-            self.repair = np.frombuffer(repair, np.uint8).reshape(256, 256, 3)
-            for frame in self.meta["frames"]:
-                box = frame["box"]
-                if len(box) != 4 or any(type(x) is not int for x in box):
-                    raise ValueError("Invalid mouth rectangle")
-                x1, y1, x2, y2 = box
-                if not (0 <= x1 < x2 <= self.width and 0 <= y1 < y2 <= self.height):
-                    raise ValueError("Mouth rectangle exceeds native frame")
-                affine = np.asarray(frame["affine"], np.float32).reshape(2, 3)
-                if not np.isfinite(affine).all() or abs(np.linalg.det(affine[:, :2])) < 1e-8:
-                    raise ValueError("Invalid mouth transform")
-                if (frame["crop_width"], frame["crop_height"]) != (210, 280):
-                    raise ValueError("Unsupported alignment crop")
-                mask = cv2.imdecode(np.frombuffer(child(self.directory, frame["mask"]).read_bytes(), np.uint8),
-                                    cv2.IMREAD_GRAYSCALE)
-                if mask is None or mask.shape != (y2 - y1, x2 - x1):
-                    raise ValueError("Mouth mask does not match its rectangle")
-                self.masks.append(child(self.directory, frame["mask"]).read_bytes())
-            self.mouth_bounds = [None if (bounds := mouth_bounds(face)) is None else np.asarray(bounds, np.float32).tolist()
-                                 for face in self._raw_faces]
-            self.lip_colors = [lip_mean(face) for face in self._raw_faces]
-        except Exception:
-            self.close()
-            raise
-
-    def prepare(self):
-        if self.closed:
-            raise RuntimeError("Person source is closed")
-        if self.frames is not None:
-            return
-        self.cache_directory.mkdir(parents=True, exist_ok=True)
-        needed = self.count * self.height * self.width * 3
-        if shutil.disk_usage(self.cache_directory).free < needed + 100 * 1024**2:
-            raise OSError(f"Decoded video cache requires {needed} bytes of free disk space")
-        self._temporary = tempfile.TemporaryDirectory(prefix="nanoavatar-", dir=self.cache_directory)
-        capture = cv2.VideoCapture(str(self.video), cv2.CAP_FFMPEG)
+        self.count = 0
+        progress = progress or (lambda *args: None)
+        Path(cache_directory).mkdir(parents=True, exist_ok=True)
+        self._temporary = tempfile.TemporaryDirectory(prefix="video-", dir=cache_directory)
+        capture = cv2.VideoCapture(str(video))
         try:
             if not capture.isOpened():
-                raise ValueError("Cannot decode person video")
-            actual = (round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-            if actual != (self.width, self.height) or abs(capture.get(cv2.CAP_PROP_FPS) - 24) > .01:
-                raise ValueError("Video metadata does not match the native 24 Hz person package")
-            start = self.meta.get("source_start_frame", 0)
-            if type(start) is not int or start < 0:
-                raise ValueError("Invalid source start frame")
-            for _ in range(start):
-                if not capture.grab():
-                    raise ValueError("Person video ends before its source start")
-            self.frames = np.memmap(Path(self._temporary.name) / "video.rgb", dtype=np.uint8, mode="w+",
-                                    shape=(self.count, self.height, self.width, 3))
-            for index in range(self.count):
-                ok, bgr = capture.read()
-                if not ok or bgr.shape != (self.height, self.width, 3):
-                    raise ValueError(f"Person video is truncated or changes dimensions at frame {index}")
-                self.frames[index] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            self.frames.flush()
+                raise ValueError("视频无法解码，请使用普通 H.264 MP4 视频。")
+            source_fps = capture.get(cv2.CAP_PROP_FPS)
+            if not np.isfinite(source_fps) or not 1 <= source_fps <= 240:
+                raise ValueError("视频帧率无效。")
+            self.fps = min(source_fps, 25.)
+            expected = min(capture.get(cv2.CAP_PROP_FRAME_COUNT)/source_fps, clip_seconds)*self.fps
+            detector = FaceDetector(face_models)
+            repair = (DATA / "repair_rgb.raw").read_bytes()
+            if len(repair) != 256*256*3:
+                raise ValueError("Missing fixed model repair mask")
+            self.repair = np.frombuffer(repair, np.uint8).reshape(256, 256, 3)
+            yy, xx = np.mgrid[:280, :210]
+            distance = np.sqrt(((xx-105)/57)**2 + ((yy-184)/53)**2)
+            blend = np.clip((1-distance)/.25, 0, 1)
+            blend = (blend*blend*(3-2*blend)*255).astype(np.uint8)
+            faces, previous = [], None
+            source_index, next_time = 0, 0.
+            cache_file = Path(self._temporary.name) / "frames.rgb"
+            with cache_file.open("wb") as cache:
+                while source_index/source_fps < clip_seconds:
+                    ok, bgr = capture.read()
+                    if not ok:
+                        break
+                    timestamp = source_index/source_fps
+                    source_index += 1
+                    if timestamp + 1e-6 < next_time:
+                        continue
+                    next_time += 1/self.fps
+                    scale = min(1., max_side/max(bgr.shape[:2]))
+                    width, height = (max(2, int(v*scale)//2*2) for v in (bgr.shape[1], bgr.shape[0]))
+                    if self.count and (width, height) != (self.width, self.height):
+                        raise ValueError("视频中途改变尺寸，请使用单一连续片段。")
+                    self.width, self.height = width, height
+                    bgr = cv2.resize(bgr, (width, height), interpolation=cv2.INTER_AREA)
+                    try:
+                        anchors = detector.anchors(bgr)
+                    except ValueError as error:
+                        raise ValueError(f"视频 {timestamp:.2f} 秒处：{error}") from error
+                    if previous is not None:
+                        step = np.max(np.linalg.norm(anchors-previous, axis=1))
+                        if step > max(25., np.linalg.norm(previous[0]-previous[1])*.7):
+                            raise ValueError("视频存在切镜或人脸位置突变，请使用一段连续单人镜头。")
+                        anchors = .7*anchors + .3*previous
+                    previous = anchors
+                    matrix = align_matrix(anchors)
+                    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                    aligned = cv2.warpAffine(rgb, matrix, (210, 280), borderValue=(127,)*3)
+                    faces.append(cv2.resize(aligned, (256, 256), interpolation=cv2.INTER_CUBIC))
+                    inverse = cv2.invertAffineTransform(matrix)
+                    corners = cv2.transform(np.array([[[0, 0], [210, 0], [0, 280], [210, 280]]], np.float32), inverse)[0]
+                    x0, y0 = np.maximum(0, np.floor(corners.min(0))).astype(int)
+                    x1, y1 = np.minimum([width, height], np.ceil(corners.max(0))).astype(int)
+                    if x1 <= x0 or y1 <= y0:
+                        raise ValueError("Face crop is outside the video")
+                    local = matrix.copy()
+                    local[:, 2] += matrix[:, :2] @ [x0, y0]
+                    alpha = cv2.warpAffine(blend, cv2.invertAffineTransform(local), (x1-x0, y1-y0))
+                    rgba = np.full((*alpha.shape, 4), 255, np.uint8)
+                    rgba[:, :, 3] = alpha
+                    ok, encoded = cv2.imencode(".png", rgba)
+                    if not ok:
+                        raise RuntimeError("Cannot prepare feathered face mask")
+                    self.masks.append(encoded.tobytes())
+                    self.geometry.append(dict(box=[int(x0), int(y0), int(x1), int(y1)], affine=local.reshape(-1).tolist()))
+                    cache.write(rgb.tobytes())
+                    self.count += 1
+                    if self.count % 5 == 0:
+                        progress(min(.85, .85*self.count/max(expected, self.count)), f"正在处理视频：{self.count} 帧")
+            if self.count < 2:
+                raise ValueError("视频太短，至少需要两帧有效画面。")
+            self.frames = np.memmap(cache_file, mode="r", dtype=np.uint8, shape=(self.count, self.height, self.width, 3))
+            self._faces_rgb = np.stack(faces)
+            self.faces = self._faces_rgb.transpose(0, 3, 1, 2)
+            progress(.86, "正在准备播放与模型预热")
         except Exception:
             self.close()
             raise
         finally:
             capture.release()
 
+    def prepare(self):
+        pass
+
     def index(self, phase):
-        position = (int(phase) * 24 // 25) % (self.count * 2 - 2)
-        return position if position < self.count else self.count * 2 - 2 - position
+        position = int(int(phase)*self.fps/25) % (self.count*2-2)
+        return position if position < self.count else self.count*2-2-position
 
-    def frame(self, phase):
-        return self.frames[self.index(phase)].copy()
-
-    def presentation(self, index, kind, blend=0.0, end_turn=0):
-        frame = self.meta["frames"][index]
-        return {"kind": kind, "box": frame["box"], "affine": np.asarray(frame["affine"]).reshape(-1).tolist(),
-                "blend": float(blend), "source_bounds": self.mouth_bounds[index], "end_turn": end_turn}
+    def presentation(self, index, kind, blend=0., end_turn=0):
+        return dict(self.geometry[index], kind=kind, blend=float(blend), source_bounds=None, end_turn=end_turn)
 
     def match_color(self, generated, index):
-        return apply_lip_color(generated, self.lip_colors[index])
+        reference = self._faces_rgb[index, 100:210, 65:190].mean((0, 1))
+        actual = generated[100:210, 65:190].mean((0, 1))
+        gain = np.clip(reference/np.maximum(actual, 1), .85, 1.15)
+        return np.rint(np.clip(generated.astype(np.float32)*gain, 0, 255)).astype(np.uint8)
 
     def close(self):
         self.closed = True
-        for value in (self.frames, self._raw_faces, self._reference_faces):
-            mapping = getattr(value, "_mmap", None)
-            if mapping is not None and not mapping.closed:
-                mapping.close()
-        self.faces = self.frames = self._raw_faces = self._reference_faces = None
+        mapping = getattr(self.frames, "_mmap", None)
+        if mapping is not None and not mapping.closed:
+            mapping.close()
+        self.frames = self.faces = None
         self.masks.clear()
+        self.geometry.clear()
         if self._temporary is not None:
             self._temporary.cleanup()
             self._temporary = None
 
-
-def color_match(generated, reference):
-    """Android LipColorMatch: only chromatic lip pixels, protecting teeth and cavity."""
-    return apply_lip_color(generated, lip_mean(reference))
-
-
-_SRGB = np.arange(256, dtype=np.float64) / 255
-_LINEAR = np.where(_SRGB <= .04045, _SRGB / 12.92, ((_SRGB + .055) / 1.055) ** 2.4)
-_XYZ = np.arange(16385, dtype=np.float64) / 16384
-_LAB_CURVE = np.where(_XYZ > .008856, np.cbrt(_XYZ), 7.787 * _XYZ + 16 / 116)
-
-
-def smooth(low, high, value):
-    t = np.clip((value - low) / (high - low), 0, 1)
-    return t * t * (3 - 2 * t)
-
-
-def lab_curve(value):
-    position = np.clip(value * 16384, 0, 16384)
-    index = np.minimum(position.astype(np.int32), 16383)
-    return _LAB_CURVE[index] + (_LAB_CURVE[index + 1] - _LAB_CURVE[index]) * (position - index)
-
-
-def lip_lab(rgb):
-    region = rgb[132:186, 82:174]
-    r, g, b = np.moveaxis(_LINEAR[region], -1, 0)
-    fy = lab_curve(.212671 * r + .715160 * g + .072169 * b)
-    fx = lab_curve((.412453 * r + .357580 * g + .180423 * b) / .950456)
-    a = np.clip(np.rint(500 * (fx - fy)) + 128, 0, 255).astype(np.uint8)
-    return region, a, (116 * fy - 16) * 2.55
-
-
-def lip_mean(rgb):
-    region, a, light = lip_lab(rgb)
-    rank = int(np.ceil(.85 * (a.size - 1)))
-    threshold = np.partition(a.reshape(-1), rank)[rank]
-    chosen = region[(a >= threshold) & (light > 35)]
-    if len(chosen) < 100:
-        return None
-    mean = chosen.mean(axis=0)
-    return mean if np.all(mean > 0) else None
-
-
-def apply_lip_color(generated, target):
-    rgb = generated.copy()
-    current = lip_mean(rgb)
-    if target is None or current is None:
-        return rgb
-    region = rgb[132:186, 82:174].astype(np.float64)
-    r, g, b = np.moveaxis(region, -1, 0)
-    total = r + g + b
-    score = np.maximum(0, 255 * (r - np.maximum(g, b)) / (total + 1))
-    yy, xx = np.mgrid[132:186, 82:174]
-    spatial = (1 - smooth(.85, 1, np.hypot((xx - 128) / 46, (yy - 159) / 27))).astype(np.float32)
-    weight = spatial * smooth(25.5, 56.1, score) * smooth(96, 160, total)
-    ratio = np.clip(target / current, .8, 1.2) - 1
-    rgb[132:186, 82:174] = np.rint(np.clip(region * (1 + weight[..., None] * ratio), 0, 255)).astype(np.uint8)
-    return rgb
-
-
-def mouth_bounds(rgb):
-    """Android MouthMotion source anchors; invalid low-chroma mouths return null."""
-    _, a, _ = lip_lab(rgb)
-    median = np.partition(a.reshape(-1), a.size // 2 - 1)[a.size // 2 - 1]
-    weights = np.maximum(0, a.astype(np.float64) - int(median) - 8)
-    if weights.sum() < 500:
-        return None
-
-    def quantile(values, fraction, origin):
-        cumulative = np.cumsum(values)
-        rank = fraction * cumulative[-1]
-        index = int(np.searchsorted(cumulative, rank))
-        before = cumulative[index - 1] if index else 0
-        return float(origin + index - .5 + (rank - before) / values[index])
-
-    columns, rows = weights.sum(axis=0), weights.sum(axis=1)
-    return [quantile(columns, .05, 82), quantile(columns, .95, 82),
-            quantile(rows, .05, 132), quantile(rows, .95, 132)]

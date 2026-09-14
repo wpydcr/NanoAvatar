@@ -41,12 +41,12 @@
 
 **版本 1.0.0** · [完整版 APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk) · [Lite APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk)
 
-1. 安装 APK 并打开 App，模型和默认人物已经内置。
+1. 安装 APK 并打开 App。
 2. 默认进入**体验模式**。长按录音按钮说话，松开后用自己的声音驱动人物。
 3. 如需 AI 对话，切换到**交互模式**并填写阿里云 API key。
 
-- **完整版**：完整人物资源，生成帧率固定为 **25 FPS**。
-- **Lite**：轻量化模型，更小人物包。生成帧率固定为 **12.5 FPS**。安装包更小，算力需求更低。
+- **完整版**：生成帧率固定为 **25 FPS**。
+- **Lite**：轻量化模型，生成帧率固定为 **12.5 FPS**，安装包更小，算力需求更低。
 
 两版都会实时显示 FPS 和首帧时间。
 
@@ -66,6 +66,8 @@
 <a id="run-on-web"></a>
 ## 🖥️ Web：用本地 NVIDIA GPU 运行
 
+Web 是简单体验代码，上传视频即可体验。实际使用时，制作人物包的效果最优。
+
 **环境要求：** Python 3.11、NVIDIA GPU、CUDA 版 PyTorch。
 
 获取源码：
@@ -75,7 +77,7 @@ git clone https://github.com/wpydcr/NanoAvatar.git
 cd NanoAvatar
 ```
 
-下载 [NanoAvatar-avatar.zip](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-avatar.zip)，将解压出的 `avatar/` 目录放到仓库内的 `avatars/person/avatar/`。安装依赖：
+安装依赖：
 
 ```shell
 python -m pip install --force-reinstall torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
@@ -91,7 +93,7 @@ HuBERT FP16，口型网络 FP32。
 
 ```shell
 hf download wpydcr/NanoAvatar --include "full-precision/*" --local-dir models
-python web/run.py --models models/full-precision --avatar avatars/person/avatar
+python web/run.py --models models/full-precision
 ```
 
 **⚡ 量化版（Windows / RTX 4090）**
@@ -100,43 +102,29 @@ HuBERT W8A16，混合 INT8 口型模型。
 
 ```shell
 hf download wpydcr/NanoAvatar --include "quantized/*" --local-dir models
-python web/run.py --models models/quantized --avatar avatars/person/avatar
+python web/run.py --models models/quantized
 ```
 
 Web 会根据 `--models` 指向的目录选择模型，量化 CUDA DLL 已随 Web 代码提供。
 
-打开 **http://127.0.0.1:8765**。启动时会加载模型并准备人物。
+打开 **http://127.0.0.1:8890**。上传一小段单人、正面、连续镜头的视频，等待人物准备完成，再上传音频驱动人物。视频最大 256 MB，默认取前 10 秒。
 
 重装参数用于替换环境中可能已有的同版本 CPU 版 PyTorch。
 
-- **本地 WAV**：16 kHz、单声道、PCM16，最长 90 秒，无需云端账号。
-- **文字对话**：在设置中填写 DashScope API Key，或给服务进程设置 `DASHSCOPE_API_KEY`。示例使用通义千问和 CosyVoice，可修改 `web/cloud.py` 更换服务。
-- **停止、清空、重连**：停止当前回答、清空对话或建立新连接；清空时保留输入草稿。
+- **本地音频**：支持 WAV、MP3 等浏览器可解码的格式，最大 32 MB、最长 90 秒，无需云端账号。
+- **文字对话**：在“文字对话设置”中填写 DashScope API Key 并点击“应用设置”，或给服务进程设置 `DASHSCOPE_API_KEY`。示例使用通义千问和 CosyVoice，可修改 `web/cloud.py` 更换服务。
+- **停止、重连**：停止当前回答，或在断开后重新连接。
 
-## 🛠️ 模型与源码构建
+## 🛠️ 模型与源码
 
-本仓库提供推理源码。模型权重放在 Hugging Face，APK 和人物包放在 Releases。
+本仓库提供 Web 推理源码。模型权重放在 Hugging Face，APK 放在 Releases。
 
 | 平台 | 源码 | Hugging Face 权重 |
 | --- | --- | --- |
-| **安卓** | [`android/`](android/) | [`android-qnn/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/android-qnn) |
 | **Web 满血版** | [`web/`](web/) | `full-precision/`（come soon） |
 | **Web 量化版** | [`web/`](web/) | [`quantized/`](https://huggingface.co/wpydcr/NanoAvatar/tree/main/quantized) |
 
-<details>
-<summary><strong>🔧 一套源码构建两版安卓 APK</strong></summary>
-
-使用 JDK 17 或更新版本、Android SDK Platform 35 和 Build Tools 35.0.0，设置 `JAVA_HOME` 与 `ANDROID_HOME`。准备 Full 和 Lite 各自的资源目录，每份目录均包含 `bundled/payload/phone_config.json` 和 `bundled/avatar/avatar.json`。Release APK 的 `assets/bundled/` 中也包含对应资源。
-
-在 `android/` 目录一次构建两版：
-
-```shell
-sh gradlew :app:assembleFullRelease :app:assembleLiteRelease -PfullBundleAssets=../bundle-assets/full -PliteBundleAssets=../bundle-assets/lite
-```
-
-Windows 将 `sh gradlew` 换为 `.\gradlew.bat`。两版均使用 `app/src/main/`，由 flavor 选择模型、人物、图标和帧率。版本统一为 **1.0.0**，发行文件名固定为 **NanoAvatar.apk** 与 **NanoAvatar-Lite.apk**。
-
-</details>
+[`android/`](android/) 是 APK 的源码。
 
 ## ⭐ 支持 NanoAvatar
 
@@ -146,7 +134,7 @@ Windows 将 `sh gradlew` 换为 `.\gradlew.bat`。两版均使用 `app/src/main/
 ## 📄 许可
 
 - **MIT**：NanoAvatar 自有源码；Chinese HuBERT 权重及其转换版本保留上游 MIT 许可。
-- **CC BY-NC 4.0**：NanoAvatar 口型权重及其量化、编译版本、默认人物包和演示视频。
+- **CC BY-NC 4.0**：NanoAvatar 口型权重及其量化、编译版本和演示视频。
 - **第三方组件**：保留各自原有许可。
 
 各部分的适用范围及完整协议见 [LICENSE](LICENSE)。这些协议分别适用于不同内容，并非同一文件可任选 MIT 或 CC BY-NC 4.0。

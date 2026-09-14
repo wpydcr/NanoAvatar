@@ -31,8 +31,11 @@ class Steps(unittest.TestCase):
             match_color=lambda face, index: face,
             composite=lambda index, face, strength: face)
         runtime = types.SimpleNamespace(close=lambda: None)
-        with patch.object(module, "Models", return_value=runtime), patch.object(module, "PhoneSource", return_value=source):
-            engine = module.AvatarEngine("unused", "unused")
+        with patch.object(module, "Models", return_value=runtime):
+            engine = module.AvatarEngine(None, "unused")
+        engine.source = source
+        engine.width = engine.height = 256
+        engine.mask = np.ascontiguousarray(source.repair.transpose(2, 0, 1).astype(np.float32)/255)
         def cache(indices):
             for index in indices:
                 engine.cache[index] = [np.zeros((1, 1), np.float16)] * 7

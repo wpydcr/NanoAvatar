@@ -1,4 +1,5 @@
-import {DisplayedMouth, compositeFace} from './mouth.js';
+import {DisplayedMouth, FaceCompositor} from './mouth.js';
+const closeFrame=f=>{f.bitmap?.close();f.face?.close();f.mask?.close();};
 
 // Each scheduled audio buffer and layered frame belong to one 640-sample interval.
 // A gap pauses both media tracks; arrival time never changes their relative PTS.
@@ -14,6 +15,7 @@ export class AvatarPlayer {
     this.gains = new Map();
     this.cancelledThrough = 0;
     this.mouth = new DisplayedMouth();
+    this.compositor = new FaceCompositor();
     this.lastBase = null;
     this.playing = false;
     this.nextTime = 0;
@@ -59,7 +61,7 @@ export class AvatarPlayer {
     if (this.failed || this.disposed) return;
     this.failed = true;
     this.decodeQueue = [];
-    for (const frame of this.decoded.values()) frame.bitmap.close();
+    for (const frame of this.decoded.values()) closeFrame(frame);
     this.decoded.clear();
     this.callbacks.error?.(message);
   }
@@ -82,7 +84,7 @@ export class AvatarPlayer {
       if(!['speech','idle','end'].includes(meta.kind)||!Number.isFinite(meta.blend)||meta.blend<0||meta.blend>1||
          !Array.isArray(meta.box)||meta.box.length!==4||!meta.box.every(Number.isInteger)||
          meta.box[0]<0||meta.box[1]<0||meta.box[2]>this.canvas.width||meta.box[3]>this.canvas.height||meta.box[2]<=meta.box[0]||meta.box[3]<=meta.box[1]||
-         !Array.isArray(meta.affine)||meta.affine.length!==6||!meta.affine.every(Number.isFinite)||
+         !Array.isArray(meta.affine)||meta.affine.length!==6||!meta.affine.every(Number.isFinite)||Math.abs(meta.affine[0]*meta.affine[4]-meta.affine[1]*meta.affine[3])<1e-8||
          (meta.source_bounds!==null&&(!Array.isArray(meta.source_bounds)||meta.source_bounds.length!==4||!meta.source_bounds.every(Number.isFinite)))||
          !Number.isInteger(meta.end_turn)||meta.end_turn<0||
          (meta.kind==='speech' ? (!turn||!faceSize||meta.end_turn!==0) : (turn!==0||faceSize!==0))||
@@ -124,10 +126,9 @@ export class AvatarPlayer {
     const [bitmap,face,mask]=bitmaps,[x0,y0,x1,y1]=frame.meta.box;
     if(bitmap.width!==this.canvas.width||bitmap.height!==this.canvas.height||
        (face&&(face.width!==256||face.height!==256))||mask.width!==x1-x0||mask.height!==y1-y0){
-      bitmaps.forEach(b=>b?.close());throw new Error('Layer size does not match the person package.');
+      bitmaps.forEach(b=>b?.close());throw new Error('Layer size does not match the uploaded video.');
     }
-    const pixels=b=>{const canvas=new OffscreenCanvas(b.width,b.height),context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(b,0,0);return context.getImageData(0,0,b.width,b.height).data;};
-    try{frame.face=face?pixels(face):null;frame.mask=pixels(mask);}catch(error){bitmap.close();throw error;}finally{face?.close();mask.close();}
+    frame.face=face;frame.mask=mask;
     frame.pcm = Float32Array.from(new Int16Array(data, 44, 640), value => value / 32768);
     frame.bitmap=bitmap;
     this.decoded.set(frame.sequence, frame);
@@ -209,7 +210,7 @@ export class AvatarPlayer {
     const audible = this.audibleNow();
     let latest = null;
     while (this.scheduled.length && this.scheduled[0].when <= audible) {
-      if (latest) latest.bitmap.close();
+      if (latest) closeFrame(latest);
       latest = this.scheduled.shift();
     }
     if (latest) {
@@ -220,8 +221,8 @@ export class AvatarPlayer {
       this.lastBase?.close();
       this.lastBase=latest.bitmap;
       const draw=this.mouth.display(latest,performance.now());
-      if(draw)compositeFace(this.paint,latest,draw);
-      this.mouth.committed(latest.meta.kind,performance.now());
+      if(draw)this.compositor.paint(this.paint,latest,draw);
+      latest.face?.close();latest.face=null;latest.mask?.close();latest.mask=null;
       this.canvas.classList.add('visible');
       this.lastSequence = latest.sequence;
       if (!discarded) this.callbacks.frame?.(latest);
@@ -244,10 +245,10 @@ export class AvatarPlayer {
     cancelAnimationFrame(this.animation);
     for (const item of this.nodes) { try { item.node.stop(); } catch (_) {} }
     this.nodes.clear();
-    for (const frame of [...this.queue, ...this.scheduled]) frame.bitmap.close();
+    for (const frame of [...this.queue, ...this.scheduled]) closeFrame(frame);
     this.queue = this.scheduled = [];
     this.decodeQueue = [];
-    for (const frame of this.decoded.values()) frame.bitmap.close();
+    for (const frame of this.decoded.values()) closeFrame(frame);
     this.decoded.clear();
     for (const gain of this.gains.values()) gain.disconnect();
     this.gains.clear();

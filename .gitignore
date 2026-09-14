@@ -14,7 +14,8 @@ local.properties
 *.keystore
 *.apk
 *.aab
-models/
+models/*
+!models/face/
 avatars/
 bundle-assets/
 outputs/

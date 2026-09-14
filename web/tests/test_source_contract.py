@@ -1,52 +1,65 @@
-"""CPU checks for distinct model references and visible avatar assets."""
-import importlib.util
-import json
+﻿"""Direct-video cache, failure cleanup and alpha-mask regressions."""
 from pathlib import Path
 import tempfile
 import unittest
-
+from unittest.mock import patch
+import sys
 import cv2
 import numpy as np
 
-spec = importlib.util.spec_from_file_location("avatar_source", Path(__file__).resolve().parents[1] / "inference/source.py")
-source = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(source)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from inference.source import VideoSource
+from inference.detection import align_matrix
 
 
-class SourceContract(unittest.TestCase):
-    def test_color_match_preserves_skin_teeth_and_cavity(self):
-        generated = np.full((256, 256, 3), [150, 110, 90], np.uint8)
-        reference = generated.copy()
-        generated[145:172, 100:156] = [170, 45, 65]
-        reference[145:172, 100:156] = [200, 65, 75]
-        generated[155:160, 112:140] = [230, 230, 230]
-        generated[162:168, 112:140] = [12, 10, 10]
-        reference[92:125, 72:184] = [190, 150, 130]
-        corrected = source.color_match(generated, reference)
-        self.assertTrue(np.array_equal(corrected[:132], generated[:132]), "Lip correction must not recolor the whole face")
-        self.assertTrue(np.array_equal(corrected[155:160, 112:140], generated[155:160, 112:140]))
-        self.assertTrue(np.array_equal(corrected[162:168, 112:140], generated[162:168, 112:140]))
-        self.assertGreater(int(corrected[150, 120, 0]), int(generated[150, 120, 0]))
+class VideoTests(unittest.TestCase):
+    def make_video(self, path):
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 12, (96, 128))
+        self.assertTrue(writer.isOpened())
+        for value in (60, 100, 140):
+            writer.write(np.full((128, 96, 3), value, np.uint8))
+        writer.release()
 
-    def test_display_mouth_is_never_fed_back_as_model_reference(self):
+    def test_video_needs_no_person_package_and_keeps_source_fps(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "video.mp4").touch()
-            np.full((2, 256, 256, 3), 30, np.uint8).tofile(root / "aligned_faces_rgb.bin")
-            np.full((2, 256, 256, 3), 180, np.uint8).tofile(root / "original.bin")
-            np.zeros((256, 256, 3), np.uint8).tofile(root / "repair_rgb.raw")
-            cv2.imwrite(str(root / "mask.png"), np.full((16, 16), 255, np.uint8))
-            frame = dict(box=[0, 0, 16, 16], affine=[1, 0, 0, 0, 1, 0], crop_width=210, crop_height=280, mask="mask.png")
-            meta = dict(version=1, width=16, height=16, frame_count=2, source_fps=24,
-                        loop_frames=2, video="video.mp4", reference_faces="original.bin", frames=[frame, frame])
-            (root / "avatar.json").write_text(json.dumps(meta))
-            person = source.PhoneSource(root, root / "cache")
+            self.make_video(root/"person.avi")
+            points = np.array([[27, 36], [66, 36], [47, 60]], np.float32)
+            with patch("inference.source.FaceDetector") as detector:
+                detector.return_value.anchors.return_value = points
+                source = VideoSource(root/"person.avi", root/"cache", root/"unused")
             try:
-                self.assertTrue(np.all(person.faces == 180), "Display pixels must not enter the face encoder")
-                self.assertTrue(np.all(person._raw_faces == 30), "Display pixels still own color/geometry targets")
+                self.assertEqual((source.width, source.height, source.count, source.fps), (96, 128, 3, 12.))
+                self.assertEqual(source.faces.shape, (3, 3, 256, 256))
+                self.assertEqual(source.index(0), 0)
+                self.assertEqual(source.index(5), 2)
+                mask = cv2.imdecode(np.frombuffer(source.masks[0], np.uint8), cv2.IMREAD_UNCHANGED)
+                self.assertEqual(mask.shape[2], 4)
+                self.assertEqual(mask[:, :, 3].min(), 0)
+                self.assertGreater(mask[:, :, 3].max(), 200)
+                self.assertIsNone(source.presentation(0, "speech")["source_bounds"])
+                self.assertFalse(list(root.rglob("avatar.json")))
             finally:
-                person.close()
+                source.close()
+            self.assertEqual(list((root/"cache").iterdir()), [])
+
+    def test_bad_video_or_missing_face_releases_partial_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_video(root/"person.avi")
+            with patch("inference.source.FaceDetector") as detector:
+                detector.return_value.anchors.side_effect = ValueError("no face")
+                with self.assertRaisesRegex(ValueError, "no face"):
+                    VideoSource(root/"person.avi", root/"cache", root/"unused")
+            self.assertEqual(list((root/"cache").iterdir()), [])
+
+    def test_alignment_maps_the_trained_template(self):
+        target = np.array([[47.6, 56.], [162.4, 56.], [105., 112.]], np.float32)
+        input_points = target*.5 + [13., 21.]
+        actual = cv2.transform(input_points.astype(np.float32)[None], align_matrix(input_points))[0]
+        np.testing.assert_allclose(actual, target, atol=1e-4)
 
 
 if __name__ == "__main__":
     unittest.main()
+

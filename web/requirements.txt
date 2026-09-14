@@ -3,3 +3,6 @@ numpy>=2,<3
 opencv-python>=4.10,<5
 torch==2.10.0
 transformers==5.2.0
+
+# CPU preprocessing uses the bundled ONNX face models.
+onnxruntime-gpu==1.24.4

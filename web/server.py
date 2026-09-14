@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 import time
+import uuid
 from urllib.parse import urlsplit
 import wave
 
@@ -185,9 +186,12 @@ class Viewer:
 
     async def send_batch(self, phase, packets, reply):
         loop = asyncio.get_running_loop()
-        def encode(packet):
-            return encode_image(packet.rgb), encode_png(packet.face_rgb)
-        futures = [loop.run_in_executor(self.encoders, encode, p) for p in packets]
+        cached = getattr(self.model, "source_jpeg", None)
+        jpegs = ([await self.render_call(cached, phase+i) for i in range(len(packets))]
+                 if cached else [None] * len(packets))
+        def encode(packet, jpeg):
+            return jpeg if jpeg is not None else encode_image(packet.rgb), encode_png(packet.face_rgb)
+        futures = [loop.run_in_executor(self.encoders, encode, p, jpeg) for p, jpeg in zip(packets, jpegs)]
         try:
             for index, (packet, future) in enumerate(zip(packets, futures)):
                 jpeg, face = await future
@@ -326,7 +330,7 @@ class Viewer:
             pass
         except Exception as error:
             LOG.error("Renderer failed: %s", type(error).__name__)
-            await self.emit({"type": "fatal", "message": "Avatar rendering failed. Check the model weights and person package."})
+            await self.emit({"type": "fatal", "message": "Avatar rendering failed. Check the model weights and uploaded video."})
         finally:
             if pending_send is not None:
                 pending_send.cancel()
@@ -360,55 +364,145 @@ class Viewer:
             await pump
 
 
-def create_app(model=None, config=None, *, model_factory=None):
-    """Own the engine and worker lifetime, including partially failed startup."""
+
+def create_app(model=None, config=None, *, model_factory=None, face_models=None, output=None,
+               max_side=960, clip_seconds=10):
+    """Own one model worker and one replaceable uploaded video."""
     if (model is None) == (model_factory is None):
         raise ValueError("Provide exactly one model or model_factory")
-    app = web.Application(client_max_size=MAX_AUDIO * 2 + 65536)
+    output = Path(output or Path.cwd() / "outputs")
+    face_models = Path(face_models or Path(__file__).resolve().parents[1] / "models/face")
+    output.mkdir(parents=True, exist_ok=True)
+    upload_limit = 256 * 1024**2
+    app = web.Application(client_max_size=upload_limit + 1024**2)
     cloud = DashScope(config or CloudConfig())
     renderer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="nanoavatar-inference")
     encoders = ThreadPoolExecutor(max_workers=2, thread_name_prefix="nanoavatar-jpeg")
     current = None
+    available = asyncio.Event()
+    available.set()
+    task = None
+    busy = False
+    runtime = {}
+    revision = 0
+    status = dict(progress=0., message="请上传人物视频", error=None)
+
+    def same_origin(request):
+        origin = request.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != request.host:
+            raise web.HTTPForbidden(text="Same-origin page required")
+
+    def update_progress(value, message):
+        status.update(progress=value, message=message)
 
     async def home(request):
         return web.FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
 
     async def health(request):
-        return web.json_response(dict(status="ready", width=model.width, height=model.height,
-                                      runtime=await asyncio.get_running_loop().run_in_executor(renderer, model.runtime_info),
-                                      **cloud.config.public()))
+        return web.json_response(dict(status="ready", preparing=busy,
+            avatar_ready=bool(getattr(model, "source", None)) and not getattr(model, "closed", False),
+            width=model.width, height=model.height, runtime=runtime, revision=revision,
+            clip_seconds=clip_seconds, max_side=max_side, **status, **cloud.config.public()),
+            headers={"Cache-Control": "no-store"})
+
+    async def prepare(path):
+        nonlocal busy, revision
+        loop = asyncio.get_running_loop()
+        try:
+            if current:
+                await current.socket.close(code=1001, message=b"Replacing video")
+            await available.wait()
+            def progress(value, message):
+                loop.call_soon_threadsafe(update_progress, value, message)
+            await loop.run_in_executor(renderer, model.set_video, path, face_models,
+                                       max_side, clip_seconds, progress)
+            revision += 1
+            status.update(progress=1., message="人物视频已就绪", error=None)
+            LOG.info("Video ready: %s x %s, %s frames", model.width, model.height, model.source.count)
+        except Exception as error:
+            LOG.exception("Video preparation failed")
+            message = str(error) if isinstance(error, (ValueError, FileNotFoundError)) else "视频准备失败，请查看服务日志或更换视频。"
+            status.update(progress=0., message=message, error=message)
+        finally:
+            path.unlink(missing_ok=True)
+            busy = False
+
+    async def upload(request):
+        nonlocal busy, task
+        same_origin(request)
+        if busy:
+            return web.json_response({"error": "已有视频正在处理，请稍候。"}, status=409)
+        if task is not None and not task.done():
+            return web.json_response({"error": "请等待上次处理结束。"}, status=409)
+        busy = True
+        status.update(progress=0., message="正在接收视频", error=None)
+        path = output / ("upload-" + uuid.uuid4().hex + ".mp4")
+        try:
+            reader = await request.multipart()
+            part = await reader.next()
+            if part is None or part.name != "video" or not part.filename:
+                raise ValueError("请选择人物视频。")
+            size = 0
+            with path.open("xb") as file:
+                while chunk := await part.read_chunk(256*1024):
+                    size += len(chunk)
+                    if size > upload_limit:
+                        raise ValueError("视频文件不能超过 256 MB。")
+                    file.write(chunk)
+            if size < 16:
+                raise ValueError("视频文件为空或不完整。")
+            status.update(message="正在分析视频")
+            task = asyncio.create_task(prepare(path), name="nanoavatar-prepare-video")
+            return web.json_response({"status": "preparing"}, status=202)
+        except (ValueError, AssertionError, web.HTTPException) as error:
+            busy = False
+            path.unlink(missing_ok=True)
+            message = str(error) or "上传格式无效。"
+            status.update(error=message, message=message)
+            return web.json_response({"error": message}, status=400)
+        except BaseException:
+            busy = False
+            path.unlink(missing_ok=True)
+            raise
 
     async def websocket(request):
         nonlocal current
-        origin = request.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != request.host:
-            raise web.HTTPForbidden(text="Same-origin page required")
-        socket = web.WebSocketResponse(heartbeat=20, max_msg_size=MAX_AUDIO * 2 + 65536, compress=False)
+        same_origin(request)
+        socket = web.WebSocketResponse(heartbeat=20, max_msg_size=MAX_AUDIO*2+65536, compress=False)
         await socket.prepare(request)
+        if busy or not getattr(model, "source", None):
+            await socket.send_json({"type": "fatal", "message": "请先上传人物视频并等待准备完成。"})
+            await socket.close()
+            return socket
         if current is not None:
-            await socket.send_json({"type": "fatal", "message": "This demo is already open in another tab. Close that tab first."})
+            await socket.send_json({"type": "fatal", "message": "只支持一个播放页面，请关闭另一个页面。"})
             await socket.close()
             return socket
         current = Viewer(socket, model, cloud, renderer, encoders)
+        available.clear()
         try:
             await current.run()
         finally:
             current = None
+            available.set()
         return socket
 
     async def lifetime(application):
-        nonlocal model
+        nonlocal model, runtime
         loop = asyncio.get_running_loop()
         try:
             if model is None:
-                LOG.info("Loading the local CUDA models and person package...")
+                LOG.info("Loading local CUDA models...")
                 model = await loop.run_in_executor(renderer, model_factory)
             await loop.run_in_executor(renderer, model.warmup)
-            LOG.info("Inference ready: %s", await loop.run_in_executor(renderer, model.runtime_info))
+            runtime = await loop.run_in_executor(renderer, model.runtime_info)
+            LOG.info("Models ready: %s", runtime)
             await cloud.start()
             yield
         finally:
             try:
+                if task is not None:
+                    await asyncio.gather(task, return_exceptions=True)
                 await cloud.close()
             finally:
                 try:
@@ -424,8 +518,10 @@ def create_app(model=None, config=None, *, model_factory=None):
 
     app.router.add_get("/", home)
     app.router.add_get("/health", health)
+    app.router.add_post("/video", upload)
     app.router.add_get("/ws", websocket)
     app.router.add_static("/static/", STATIC, show_index=False)
     app.cleanup_ctx.append(lifetime)
     app.on_shutdown.append(shutdown)
     return app
+

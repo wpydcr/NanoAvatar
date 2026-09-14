@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from .models import Models
-from .source import PhoneSource
+from .source import VideoSource
 
 class AvatarEngine:
     def __init__(self, directory, model_directory, cache_directory=None):
@@ -28,16 +28,41 @@ class AvatarEngine:
         self._last_idle_phase = -1
         self._last_idle_jpeg = None
         self._warmed = False
+        self.cache_directory = Path(cache_directory or Path.cwd() / "outputs/cache")
+        self.width = self.height = 0
         try:
             cv2.setNumThreads(1)
             self.models = Models(model_directory)
-            self.source = PhoneSource(directory, cache_directory or Path.cwd() / "outputs/nanoavatar-cache")
-            self.width, self.height = self.source.width, self.source.height
-            self.source.prepare()
-            self.mask = np.ascontiguousarray(self.source.repair.transpose(2, 0, 1).astype(np.float32) / 255)
+            if directory is not None:
+                raise ValueError("Upload a video through the Web page; avatar packages are no longer used.")
         except Exception:
             self.close()
             raise
+
+    def set_video(self, video, face_models, max_side=960, clip_seconds=10, progress=None):
+        self._check()
+        if self._owner is not None:
+            raise RuntimeError("Close the active viewer before replacing its video")
+        source = VideoSource(video, self.cache_directory, face_models,
+                             max_side=max_side, clip_seconds=clip_seconds, progress=progress)
+        old = self.source
+        self.source = source
+        self.width, self.height = source.width, source.height
+        self.mask = np.ascontiguousarray(source.repair.transpose(2, 0, 1).astype(np.float32) / 255)
+        self.phase = 0
+        self.cache.clear()
+        self._idle_jpegs.clear()
+        self._last_idle_jpeg = None
+        self._warmed = False
+        if old is not None:
+            old.close()
+        self.warmup()
+        if progress:
+            progress(1., "人物视频已就绪")
+
+    def source_jpeg(self, phase):
+        self._check()
+        return self._idle_jpegs[self.source.index(phase)] if self._idle_jpegs else None
 
     def _check(self):
         if self.closed:
@@ -173,7 +198,7 @@ class AvatarEngine:
     def _encode_idle(self, index):
         rgb = self.source.frames[index].copy()
         ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
-                                  [cv2.IMWRITE_JPEG_QUALITY, 90, cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+                                  [cv2.IMWRITE_JPEG_QUALITY, 85, cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
                                    cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444])
         if not ok:
             raise RuntimeError("Cannot encode idle video")
@@ -181,7 +206,7 @@ class AvatarEngine:
 
     def warmup(self):
         self._check()
-        if self._warmed:
+        if self._warmed or self.source is None:
             return
         if self._owner is not None:
             raise RuntimeError("Warm up before starting a StreamingSession")
@@ -261,6 +286,6 @@ class AvatarEngine:
         self.close()
 
 
-def load_avatar(directory, *, models, cache_directory=None):
-    """Load an avatar-v1 person with a complete floating or native integer model pair."""
+def load_avatar(directory=None, *, models, cache_directory=None):
+    """Load models once; a video is attached later by the upload endpoint."""
     return AvatarEngine(directory, models, cache_directory=cache_directory)
