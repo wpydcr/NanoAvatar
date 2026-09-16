@@ -1,12 +1,9 @@
-"""Load ordinary or native integer HuBERT/lip checkpoints on CUDA."""
-from contextlib import nullcontext
+"""Load ordinary checkpoints or portable quantized TorchScript models on CUDA."""
 import gc
 from pathlib import Path
 import time
 
 import torch
-from transformers import HubertConfig, HubertModel
-from .networks import LiveTalkingModel
 
 MODEL_FILES = ("hubert_fp16.pt", "lip_fp32.pt")
 QUANTIZED_MODEL_FILES = ("hubert_w8a16.pt", "lip_mixed_int8.pt")
@@ -47,7 +44,6 @@ def require_cuda():
 class Models:
     def __init__(self, directory):
         self.hubert = self.lip = None
-        self.kernels = None
         self.load_timings = {}
         self.device = torch.device("cuda:0")
         directory = Path(directory).expanduser().resolve()
@@ -58,35 +54,31 @@ class Models:
             torch.set_num_threads(4)
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
-            if self.quantized:
-                from .quantized import Kernels, replace_modules
-                library = directory / "native_quant_cuda.dll"
-                if not library.is_file():
-                    library = Path(__file__).with_name("native_quant_cuda.dll")
-                self.kernels = Kernels(library)
             for name, filename in zip(("hubert", "lip"), files):
                 started = time.perf_counter()
+                if self.quantized:
+                    model = torch.jit.load(str(directory / filename), map_location=self.device).eval()
+                    setattr(self, name, model)
+                    self.load_timings[name + "_load_to_gpu"] = (time.perf_counter() - started) * 1000
+                    del model
+                    continue
                 data = torch.load(directory / filename, map_location="cpu", weights_only=True, mmap=True)
-                if self.quantized and data.get("format") != "native_cuda_integer_v1":
-                    raise ValueError(f"Unsupported native integer checkpoint format: {filename}")
                 if name == "hubert":
+                    from transformers import HubertConfig, HubertModel
                     with torch.device("meta"):
                         model = HubertModel(HubertConfig.from_dict(data["config"]))
                     weights = data["state_dict"]
                     dtype = torch.float16
                 else:
+                    from .networks import LiveTalkingModel
                     cfg = {f"down.{i}": dict(in_channels=10, out_channels=10, kernel_size=3,
                            stride=2 if i == 2 else 1, padding=1, dilation=1) for i in range(3)}
                     with torch.device("meta"):
                         model = LiveTalkingModel(cfg, (3, 3, 3))
                     weights = data["state_dict"]
                     dtype = torch.float32
-                if self.quantized:
-                    replace_modules(model, data["modules"], self.kernels)
                 model.load_state_dict(weights, strict=True, assign=True)
-                # Preserve integer weights/sums and FP32 scales in native checkpoints.
-                options = {} if self.quantized else {"dtype": dtype}
-                setattr(self, name, model.eval().to(device=self.device, **options))
+                setattr(self, name, model.eval().to(device=self.device, dtype=dtype))
                 self.load_timings[name + "_load_to_gpu"] = (time.perf_counter() - started) * 1000
                 del data, weights, model
             self.parameter_mib = {name: sum(p.numel() * p.element_size() for p in
@@ -102,17 +94,22 @@ class Models:
     def run(self, name, inputs):
         try:
             if name == "hubert":
-                # Match the validated integer attention backend without changing the floating path.
-                from torch.nn.attention import SDPBackend, sdpa_kernel
-                attention = sdpa_kernel(SDPBackend.MATH) if self.quantized else nullcontext()
-                with attention:
-                    return self.hubert(inputs["pcm"]).last_hidden_state[0].float()
+                output = self.hubert(inputs["pcm"])
+                return (output if self.quantized else output.last_hidden_state)[0].float()
             if name == "audio":
+                if self.quantized:
+                    return self.lip.audio(inputs["windows"], inputs["h"], inputs["c"], inputs["start_frame"])
                 return self.lip.audio_encoder.forward_sequence(inputs["windows"], inputs["h"],
                     inputs["c"], inputs["start_frame"], 10)
             if name == "face":
+                if self.quantized:
+                    return self.lip.face(inputs["image"])
                 return self.lip.face_encoder(inputs["image"])
             if name == "generator":
+                if self.quantized:
+                    tensors = inputs["tensors"]
+                    # The engine uses generator argument order; TorchScript accepts face() order.
+                    return self.lip.generate(tensors[0], list(reversed(tensors[1:])))
                 return self.lip.generator(*inputs["tensors"])
             raise ValueError("Unknown internal model component")
         except Exception as error:

@@ -58,7 +58,7 @@
 | 📱 NanoAvatar 完整版 | 23年 · 骁龙 8 Gen 3 | **39 FPS** | **115 ms** | **834 MiB** |
 | 📱 NanoAvatar Lite | 23年 · 骁龙 8 Gen 3 | **41 FPS** | **103 ms** | **700 MiB** |
 | 📱 NanoAvatar Lite | 21年 · 骁龙 8 Gen 1 | **18 FPS** | **183 ms** | **693 MiB** |
-| ⚡ 量化版 | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
+| ⚡ 旧量化版（CUDA DLL） | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
 | 🖥️ 满血版 | RTX 4090 · Windows CUDA | **224 FPS** | **37 ms** | **1119 MiB** |
 
 🌊 **流式生成，边收音频边开口。** 接入流式大模型和流式 TTS，实测约 **0.3 秒开始说话**，无需等待整段音频生成完成。
@@ -96,7 +96,7 @@ hf download wpydcr/NanoAvatar --include "full-precision/*" --local-dir models
 python web/run.py --models models/full-precision
 ```
 
-**⚡ 量化版（Windows / RTX 4090）**
+**⚡ 量化版（CUDA 版 PyTorch）**
 
 HuBERT W8A16，混合 INT8 口型模型。
 
@@ -105,7 +105,7 @@ hf download wpydcr/NanoAvatar --include "quantized/*" --local-dir models
 python web/run.py --models models/quantized
 ```
 
-Web 会根据 `--models` 指向的目录选择模型，量化 CUDA DLL 已随 Web 代码提供。
+Web 会根据 `--models` 指向的目录选择模型，直接加载量化 TorchScript 文件，无需自定义 CUDA DLL。上表旧量化版的性能数据不代表当前可移植模型的性能。
 
 打开 **http://127.0.0.1:8890**。上传一小段单人、正面、连续镜头的视频，等待人物准备完成，再上传音频驱动人物。视频最大 256 MB，默认取前 10 秒。
 

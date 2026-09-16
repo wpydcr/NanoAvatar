@@ -58,7 +58,7 @@ Both versions display FPS and first-frame time in real time.
 | 📱 NanoAvatar | 2023 · Snapdragon 8 Gen 3 | **39 FPS** | **115 ms** | **834 MiB** |
 | 📱 NanoAvatar Lite | 2023 · Snapdragon 8 Gen 3 | **41 FPS** | **103 ms** | **700 MiB** |
 | 📱 NanoAvatar Lite | 2021 · Snapdragon 8 Gen 1 | **18 FPS** | **183 ms** | **693 MiB** |
-| ⚡ Quantized | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
+| ⚡ Previous quantized release (CUDA DLL) | RTX 4090 · Windows CUDA | **333 FPS** | **18 ms** | **834 MiB** |
 | 🖥️ Full precision | RTX 4090 · Windows CUDA | **224 FPS** | **37 ms** | **1119 MiB** |
 
 🌊 **Streaming generation: start speaking as audio arrives.** With a streaming LLM and streaming TTS, NanoAvatar starts speaking in **about 0.3 seconds in our tests**, without waiting for the complete audio.
@@ -96,7 +96,7 @@ hf download wpydcr/NanoAvatar --include "full-precision/*" --local-dir models
 python web/run.py --models models/full-precision
 ```
 
-**⚡ Quantized (Windows / RTX 4090)**
+**⚡ Quantized (CUDA PyTorch)**
 
 HuBERT W8A16 and mixed INT8 lip-sync inference.
 
@@ -105,7 +105,7 @@ hf download wpydcr/NanoAvatar --include "quantized/*" --local-dir models
 python web/run.py --models models/quantized
 ```
 
-The Web runtime selects the model from `--models`. The quantized CUDA DLL is bundled with the Web code.
+The Web runtime selects the model from `--models` and loads the quantized TorchScript files directly. No custom CUDA DLL is needed. The previous quantized release's benchmarks above do not describe these portable models.
 
 Open **http://127.0.0.1:8890**. Upload a short, continuous video of one person facing the camera, wait for preparation to finish, then upload audio to animate the person. Videos can be up to 256 MB; the demo uses the first 10 seconds by default.
 

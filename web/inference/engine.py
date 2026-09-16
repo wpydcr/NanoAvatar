@@ -1,4 +1,4 @@
-"""Serialized floating/native integer CUDA engine with independent utterance state."""
+"""Serialized floating/portable quantized CUDA engine with independent utterance state."""
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -100,7 +100,8 @@ class AvatarEngine:
         if self._speech_open and self.first_feature_started_at is None:
             self.first_feature_started_at = time.perf_counter()
         normalized = (values - values.mean()) / np.sqrt(values.var() + 1e-7)
-        tensor = torch.from_numpy(normalized[None]).to(device="cuda:0", dtype=torch.float16)
+        dtype = torch.float32 if self.models.quantized else torch.float16
+        tensor = torch.from_numpy(normalized[None]).to(device="cuda:0", dtype=dtype)
         return self._run("hubert", {"pcm": tensor})
 
     def extract(self, pcm):
@@ -228,9 +229,9 @@ class AvatarEngine:
     def runtime_info(self):
         self._check()
         quantized = self.models.quantized
-        return {"device": "GPU", "providers": ["PyTorch CUDA", "native CUDA INT8"] if quantized else ["PyTorch CUDA"],
-                "precision": "HuBERT W8A16 integer + lip mixed INT8" if quantized else "HuBERT FP16 + lip FP32",
-                "model_precision": {"hubert": "W8A16 integer", "lip": "mixed INT8 / FP32"} if quantized else {"hubert": "FP16", "lip": "FP32"},
+        return {"device": "GPU", "providers": ["PyTorch CUDA", "TorchScript"] if quantized else ["PyTorch CUDA"],
+                "precision": "INT8 weights, FP32 operators (HuBERT W8A16 + lip mixed INT8)" if quantized else "HuBERT FP16 + lip FP32",
+                "model_precision": {"hubert": "W8A16 / FP32 operators", "lip": "mixed INT8 / FP32 operators"} if quantized else {"hubert": "FP16", "lip": "FP32"},
                 "reference_cache_precision": "FP16", "automatic_fallback": False,
                 "gpu": torch.cuda.get_device_name(0), "torch_version": torch.__version__,
                 "load_timings_ms": dict(self.models.load_timings)}
