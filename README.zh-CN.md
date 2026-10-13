@@ -39,7 +39,7 @@
 <a id="run-on-android"></a>
 ## 🚀 手机上体验
 
-**版本 1.0.0** · [完整版 APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk) · [Lite APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk)
+**版本 1.0.2** · [完整版 APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk) · [Lite APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk)
 
 1. 安装 APK 并打开 App。
 2. 默认进入**体验模式**。长按录音按钮说话，松开后用自己的声音驱动人物。
