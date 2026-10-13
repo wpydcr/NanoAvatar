@@ -45,6 +45,8 @@ English · <a href="https://github.com/wpydcr/NanoAvatar/blob/main/README.zh-CN.
 2. In **Experience** mode, hold the record button, speak, then release to animate the avatar with your own voice.
 3. For AI conversation, switch to **Conversation** mode and enter an Alibaba Cloud API key.
 
+Create a custom voice from just 10–20 seconds of audio in the voice settings.
+
 - **Full:** generation is fixed at **25 FPS**.
 - **Lite:** lightweight models with generation fixed at **12.5 FPS**, a smaller download and lower compute requirements.
 
