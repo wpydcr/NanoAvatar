@@ -35,6 +35,7 @@ public final class ChatActivity extends Activity {
     private boolean experience=true,recordHeld;
     private long recordingStarted;
     private CredentialStore credentials;
+    private VoiceSettings voiceSettings;
     private CloudConversation cloud;
     private CloudConversation.Reply reply;
     private AvatarSession engine;
@@ -53,6 +54,7 @@ public final class ChatActivity extends Activity {
         super.onCreate(saved);
         assets=new File(getExternalFilesDir(null),"avatar");
         credentials=new CredentialStore(this);
+        voiceSettings=new VoiceSettings(this,credentials,()->english,()->{cancel(null);showStatus("音色已更新，可以继续提问");});
         english=getPreferences(MODE_PRIVATE).getBoolean("ui_english",false);
         experience=saved==null||saved.getBoolean("experience_mode",true);
         buildUi();
@@ -220,7 +222,12 @@ public final class ChatActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){
         super.onRequestPermissionsResult(request,permissions,grants);
+        if(voiceSettings!=null&&voiceSettings.onPermissionResult(request,grants))return;
         if(request==41&&experience&&!destroyed)showStatus(grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED?"麦克风已就绪，请再次长按录音":"未开启麦克风权限，可在系统设置中允许后重试");
+    }
+    @Override protected void onActivityResult(int request,int result,android.content.Intent data){
+        super.onActivityResult(request,result,data);
+        if(voiceSettings!=null)voiceSettings.onActivityResult(request,result,data);
     }
     private final class TranscriptAdapter extends BaseAdapter {
         public int getCount(){return history.size()+(!committed?2:0);}
@@ -249,12 +256,15 @@ public final class ChatActivity extends Activity {
         String clean=value.trim();if(clean.isEmpty()||!ready||background||!engine.isReady())return;
         if(!historyLoaded){loadHistory();if(!historyLoaded)return;}
         if(credentials.get().isEmpty()){settings();return;}
+        String voice;
+        try{voice=voiceSettings.selectedVoice();}
+        catch(IOException error){showStatus("音色设置无法读取，请检查存储空间后重试");return;}
         cancel(null);
         long id=engine.begin();active=id;
         prompt=clean;response.setLength(0);committed=false;refreshTranscript(true);
         input.setText("");saveDraft();((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(input.getWindowToken(),0);
         stop.setEnabled(true);showStatus("正在回答");
-        reply=cloud.start(id,clean,new ArrayList<>(history),credentials.get());
+        reply=cloud.start(id,clean,new ArrayList<>(history),credentials.get(),voice);
     }
     private void cancel(String message) {
         VoiceRecorder capture=recorder;recorder=null;recordHeld=false;if(capture!=null)capture.close();
@@ -310,9 +320,11 @@ public final class ChatActivity extends Activity {
         field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         field.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         field.setHint(configured?t("已配置，输入新密钥可替换","Configured. Enter a new key to replace it"):t("阿里云 API Key","Aliyun API key"));field.setPadding(dp(20),dp(16),dp(20),dp(16));
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(12),0,dp(12),dp(8));panel.addView(field);
+        Button voices=new Button(this);voices.setAllCaps(false);voices.setText(t("选择音色：","Choose voice: ")+voiceSettings.selectedName());voices.setEnabled(configured);panel.addView(voices);
         AlertDialog.Builder builder=new AlertDialog.Builder(this).setTitle(t("演示服务设置","Demo service settings"))
             .setMessage(t("阿里云用于演示中的文字回复和语音合成。密钥仅加密保存在本机，本地数字人模型推理不需要密钥。","Aliyun provides the demo's text replies and speech synthesis. The key is encrypted and stored only on this device. Local avatar model inference does not require a key."))
-            .setView(field).setNegativeButton(t("取消","Cancel"),null).setPositiveButton(t("保存","Save"),null);
+            .setView(panel).setNegativeButton(t("取消","Cancel"),null).setPositiveButton(t("保存","Save"),null);
         if(configured)builder.setNeutralButton(t("移除密钥","Remove key"),(d,w)->{
             try{credentials.set("");cancel(null);showStatus("密钥已移除，请在设置中重新配置");}
             catch(Exception error){showStatus("密钥未能移除，请重试");}
@@ -322,11 +334,17 @@ public final class ChatActivity extends Activity {
             if(key.isEmpty()){field.setError(t("请输入密钥，或取消以保留当前设置","Enter a key, or cancel to keep the current setting"));return;}
             try{credentials.set(key);dialog.dismiss();showStatus("已保存，可以开始对话");}
             catch(Exception error){field.setError(t("密钥未保存，请检查输入","Key was not saved. Check the input"));}
-        }));dialog.show();
+        }));
+        voices.setOnClickListener(v->{
+            if(!field.getText().toString().trim().isEmpty()){field.setError(t("请先保存新密钥，再选择音色","Save the new key before choosing a voice"));return;}
+            dialog.dismiss();cancel(null);voiceSettings.show();
+        });dialog.show();
     }
 
     private String englishStatus(String message) {
         switch(message){
+            case "音色已更新，可以继续提问":return "Voice updated. Ready for another question";
+            case "音色设置无法读取，请检查存储空间后重试":return "Could not read voice settings. Check device storage and retry";
             case "人物已准备好，长按下方开始录音":return "Avatar ready. Hold the button to record";
             case "正在演示你的声音":return "Animating your voice";
             case "录音已取消":return "Recording cancelled";
@@ -407,8 +425,8 @@ public final class ChatActivity extends Activity {
     private void saveError(String stage,Throwable error) {
         android.util.Log.e("NanoAvatar",stage+": "+error.getClass().getSimpleName());
     }
-    @Override protected void onResume(){super.onResume();background=false;if(engine!=null)engine.setPaused(false);if(send!=null)updateControls();}
+    @Override protected void onResume(){super.onResume();background=false;if(voiceSettings!=null)voiceSettings.onResume();if(engine!=null)engine.setPaused(false);if(send!=null)updateControls();}
     @Override protected void onSaveInstanceState(Bundle state){saveDraft();state.putBoolean("experience_mode",experience);super.onSaveInstanceState(state);}
-    @Override protected void onStop(){saveDraft();background=true;boolean interrupted=recorder!=null||active!=0;cancel(interrupted&&ready?idleStatus():null);if(engine!=null)engine.setPaused(true);super.onStop();}
-    @Override protected void onDestroy(){destroyed=true;cancel(null);ui.removeCallbacksAndMessages(null);if(cloud!=null)cloud.close();if(engine!=null)engine.close();super.onDestroy();}
+    @Override protected void onStop(){saveDraft();background=true;if(voiceSettings!=null)voiceSettings.onStop();boolean interrupted=recorder!=null||active!=0;cancel(interrupted&&ready?idleStatus():null);if(engine!=null)engine.setPaused(true);super.onStop();}
+    @Override protected void onDestroy(){destroyed=true;cancel(null);ui.removeCallbacksAndMessages(null);if(voiceSettings!=null)voiceSettings.close();if(cloud!=null)cloud.close();if(engine!=null)engine.close();super.onDestroy();}
 }

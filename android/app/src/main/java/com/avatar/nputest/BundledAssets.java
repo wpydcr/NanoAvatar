@@ -27,8 +27,9 @@ final class BundledAssets {
         Files.createDirectories(root.toPath());
         for (String name : new String[]{"payload", "avatar"}) {
             interrupted();
-            File target = new File(root, name);
-            Path temporary = new File(root, ".bundled-" + name).toPath();
+            String directory = name.equals("payload") ? BuildConfig.MODEL_PAYLOAD_DIR : name;
+            File target = new File(root, directory);
+            Path temporary = new File(root, ".bundled-" + directory).toPath();
             remove(temporary);
             if (target.exists()) {
                 if (!target.isDirectory()) throw new IOException("App data path is not a directory");

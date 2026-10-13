@@ -39,7 +39,7 @@ English · <a href="https://github.com/wpydcr/NanoAvatar/blob/main/README.zh-CN.
 <a id="run-on-android"></a>
 ## 🚀 Try it on your phone
 
-**Version 1.0.0** · [Full APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk) · [Lite APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk)
+**Version 1.0.2** · [Full APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar.apk) · [Lite APK](https://github.com/wpydcr/NanoAvatar/releases/latest/download/NanoAvatar-Lite.apk)
 
 1. Install an APK and open the app.
 2. In **Experience** mode, hold the record button, speak, then release to animate the avatar with your own voice.

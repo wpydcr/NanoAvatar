@@ -2,6 +2,18 @@ plugins { id 'com.android.application' }
 
 def fullAssets = providers.gradleProperty('fullBundleAssets').orNull
 def liteAssets = providers.gradleProperty('liteBundleAssets').orNull
+def targetHtpArch = providers.gradleProperty('targetHtpArch').orElse('75').get()
+if (!(targetHtpArch in ['69', '75', '69,75'])) throw new GradleException('targetHtpArch must be 69, 75 or 69,75')
+def payloadDirectory = { String path ->
+    if (targetHtpArch == '75') return '"payload"'
+    def name = 'payload-htp' + targetHtpArch.replace(',', '-')
+    if (path != null) {
+        def config = new File(rootProject.file(path), 'bundled/payload/phone_config.json')
+        if (config.isFile()) name += '-' + java.security.MessageDigest.getInstance('SHA-256')
+                .digest(config.bytes).encodeHex().toString().substring(0, 16)
+    }
+    '"' + name + '"'
+}
 def requireAssets = { String flavor, String path ->
     if (path == null) throw new GradleException('Missing -P' + flavor + 'BundleAssets')
     def root = rootProject.file(path)
@@ -9,6 +21,10 @@ def requireAssets = { String flavor, String path ->
             || !new File(root, 'bundled/avatar/avatar.json').isFile()) {
         throw new GradleException(flavor + 'BundleAssets must contain bundled payload and avatar manifests')
     }
+    def config = new groovy.json.JsonSlurper().parse(new File(root, 'bundled/payload/phone_config.json'))
+    def modelArches = config.target_htp_arch instanceof List ? config.target_htp_arch.join(',') : config.target_htp_arch.toString()
+    if (modelArches != targetHtpArch)
+        throw new GradleException(flavor + ' model architecture does not match targetHtpArch=' + targetHtpArch)
     root
 }
 android {
@@ -17,8 +33,8 @@ android {
     defaultConfig {
         minSdk 31
         targetSdk 34
-        versionCode 6
-        versionName '1.0.0'
+        versionCode 8
+        versionName '1.0.2'
         ndk { abiFilters 'arm64-v8a' }
     }
     flavorDimensions 'edition'
@@ -28,6 +44,7 @@ android {
             applicationId 'com.nanoavatar.demo'
             resValue 'string', 'app_name', 'NanoAvatar'
             buildConfigField 'int', 'MOUTH_STRIDE', '1'
+            buildConfigField 'String', 'MODEL_PAYLOAD_DIR', payloadDirectory(fullAssets)
             manifestPlaceholders = [launcherIcon: '@mipmap/ic_launcher',
                                     launcherRoundIcon: '@mipmap/ic_launcher_round']
         }
@@ -36,6 +53,7 @@ android {
             applicationId 'com.nanoavatar.lite200'
             resValue 'string', 'app_name', 'NanoAvatar Lite'
             buildConfigField 'int', 'MOUTH_STRIDE', '2'
+            buildConfigField 'String', 'MODEL_PAYLOAD_DIR', payloadDirectory(liteAssets)
             manifestPlaceholders = [launcherIcon: '@mipmap/ic_launcher_lite',
                                     launcherRoundIcon: '@mipmap/ic_launcher_lite_round']
         }
@@ -62,17 +80,20 @@ android {
 }
 
 androidComponents {
-    onVariants(selector().withFlavor('edition', 'lite')) { variant ->
-        variant.packaging.jniLibs.excludes.addAll([
-                '**/libQnnHtpV68*.so', '**/libQnnHtpV69*.so', '**/libQnnHtpV73*.so',
-                '**/libQnnHtpV79*.so', '**/libQnnHtpV81*.so'])
+    onVariants(selector().all()) { variant ->
+        def keptArches = targetHtpArch != '75' ? targetHtpArch.tokenize(',') :
+                (variant.productFlavors.any { it.second == 'lite' } ? ['75'] : null)
+        if (keptArches != null) variant.packaging.jniLibs.excludes.addAll(
+                ['68', '69', '73', '75', '79', '81'].findAll { !(it in keptArches) }
+                        .collect { '**/libQnnHtpV' + it + '*.so' })
     }
 }
 
 android.applicationVariants.all { variant ->
     if (variant.buildType.name == 'release') {
         variant.outputs.all { output ->
-            output.outputFileName = variant.flavorName == 'full' ? 'NanoAvatar.apk' : 'NanoAvatar-Lite.apk'
+            def name = variant.flavorName == 'full' ? 'NanoAvatar' : 'NanoAvatar-Lite'
+            output.outputFileName = name + (targetHtpArch == '75' ? '' : '-HTP' + targetHtpArch.replace(',', '-')) + '.apk'
         }
     }
 }

@@ -100,19 +100,27 @@ public final class CloudConversation implements AutoCloseable {
     }
 
     public Reply start(long id, String prompt, List<Message> history, String apiKey) {
+        return start(id, prompt, history, apiKey, TTS_VOICE);
+    }
+
+    public Reply start(long id, String prompt, List<Message> history, String apiKey, String voice) {
         if (closed) {
             throw new IllegalStateException("CloudConversation is closed");
         }
         String cleanPrompt = Objects.requireNonNull(prompt, "prompt").trim();
         String cleanKey = Objects.requireNonNull(apiKey, "apiKey").trim();
+        String cleanVoice = Objects.requireNonNull(voice, "voice").trim();
         if (cleanPrompt.isEmpty()) {
             throw new IllegalArgumentException("prompt is empty");
         }
         if (cleanKey.isEmpty() || containsWhitespace(cleanKey)) {
             throw new IllegalArgumentException("apiKey is empty or malformed");
         }
+        if (cleanVoice.isEmpty() || containsWhitespace(cleanVoice)) {
+            throw new IllegalArgumentException("voice is empty or malformed");
+        }
 
-        ReplyImpl reply = new ReplyImpl(id);
+        ReplyImpl reply = new ReplyImpl(id, cleanVoice);
         active.add(reply);
         List<Message> recent = recentHistory(history == null ? Collections.emptyList() : history);
         try {
@@ -323,7 +331,7 @@ public final class CloudConversation implements AutoCloseable {
             }
             reply.recordTiming("tts_websocket_open");
             try {
-                if (!webSocket.send(runTaskJson(taskId))) {
+                if (!webSocket.send(runTaskJson(taskId, reply.voice))) {
                     reply.fail("语音合成连接已关闭，请重新发送。");
                     return;
                 }
@@ -461,10 +469,10 @@ public final class CloudConversation implements AutoCloseable {
         }
     }
 
-    private static String runTaskJson(String taskId) throws JSONException {
+    private static String runTaskJson(String taskId, String voice) throws JSONException {
         JSONObject parameters = new JSONObject()
                 .put("text_type", "PlainText")
-                .put("voice", TTS_VOICE)
+                .put("voice", voice)
                 .put("format", "pcm")
                 .put("sample_rate", 16_000)
                 .put("volume", 50)
@@ -505,6 +513,7 @@ public final class CloudConversation implements AutoCloseable {
 
     private final class ReplyImpl implements Reply {
         final long id;
+        final String voice;
         final DeliveryGate gate = new DeliveryGate();
         final ArrayBlockingQueue<Object> textQueue = new ArrayBlockingQueue<>(16);
         final TextChunks textChunks = new TextChunks();
@@ -517,8 +526,9 @@ public final class CloudConversation implements AutoCloseable {
         volatile boolean sawFinishReason;
         int textLength;
 
-        ReplyImpl(long id) {
+        ReplyImpl(long id, String voice) {
             this.id = id;
+            this.voice = voice;
         }
 
         void acceptText(String text) {

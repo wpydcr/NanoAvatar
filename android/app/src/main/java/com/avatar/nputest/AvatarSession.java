@@ -259,7 +259,7 @@ public final class AvatarSession implements AutoCloseable {
         producer = new Thread(() -> {
             try {
                 NpuBackend.Progress progress = message -> post(() -> listener.onProgress(message));
-                backend = new NpuBackend(context, new File(context.getExternalFilesDir(null), "payload"), avatar, progress);
+                backend = new NpuBackend(context, new File(context.getExternalFilesDir(null), BuildConfig.MODEL_PAYLOAD_DIR), avatar, progress);
                 backend.prepareReferences(message -> post(() -> listener.onProgress(message)));
                 if (closed) return;
                 ready = true; post(() -> { view.setKeepScreenOn(!paused); listener.onReady(); });
