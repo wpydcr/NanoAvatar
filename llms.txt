@@ -1,0 +1,15 @@
+# NanoAvatar
+
+> A mobile avatar application that generates high-fidelity talking-avatar videos directly on a phone, with no cloud GPU, plus a web demo that runs on an NVIDIA GPU.
+
+Runs on Android via APK (Full at 25 FPS, Lite at 12.5 FPS) and on the web with Python 3.11 and an NVIDIA GPU with CUDA PyTorch. Model weights are hosted on Hugging Face, APKs in Releases; android/ contains the APK source code. Streaming LLM and TTS let the avatar start speaking in about 0.3 seconds. Source code is MIT licensed; lip-sync weights and demo videos are CC BY-NC 4.0.
+
+## Docs
+
+- [NanoAvatar README](https://raw.githubusercontent.com/wpydcr/NanoAvatar/main/README.md): Project overview: on-device talking-avatar generation, APK install steps, demo videos, and streaming performance results.
+- [Demos](https://github.com/wpydcr/NanoAvatar/blob/main/README.md#-demos): English and Chinese demo videos showing the on-device avatar model on examples not used in training.
+- [Try it on your phone](https://github.com/wpydcr/NanoAvatar/blob/main/README.md#-try-it-on-your-phone): APK download links and instructions for Experience mode voice recording and Conversation mode with an Alibaba Cloud API key.
+- [Performance](https://github.com/wpydcr/NanoAvatar/blob/main/README.md#-performance): Streaming generation with a streaming LLM and TTS, starting speech in about 0.3 seconds without waiting for complete audio.
+- [Web: run on your NVIDIA GPU](https://github.com/wpydcr/NanoAvatar/blob/main/README.md#️-web-run-on-your-nvidia-gpu): Web demo setup on NVIDIA GPU: requirements, full precision and quantized models, video upload, and audio or text conversation options.
+- [Models and source](https://github.com/wpydcr/NanoAvatar/blob/main/README.md#️-models-and-source): Where to find Web inference source code, Hugging Face weights, APK Releases, and the android/ APK source code.
+- [Support NanoAvatar](https://github.com/wpydcr/NanoAvatar/blob/main/README.md#-support-nanoavatar): How to star the project, share what you build, and report problems with device, OS version and model package.
